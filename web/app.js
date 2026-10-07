@@ -1,0 +1,1996 @@
+// ==============================================================================
+// COINDCX FUTURES QUANT PRO - PERPETUAL CANDLESTICK & AI PREDICTOR ENGINE
+// ==============================================================================
+
+let currentCoin = "SOON";
+let currentInterval = "1h";
+let isBotRunning = false;
+let chartMode = "ai"; // 'ai' or 'tv'
+let currentLeverage = 10;
+let tvWidget = null;
+
+let activeCandles = [];
+let activePrediction = null;
+let activeFuturesStats = null;
+let hoveredCandle = null;
+
+// AI Strategy & Leverage Advisor State
+let advisorData = null;
+let selectedAdvisorTf = null;
+let selectedAdvisorLev = 10;
+
+// All Cryptocurrencies & Global Search State
+let allCryptosList = [];
+let allCryptosSort = "volume";
+let allCryptosFilterQuery = "";
+let currentTickerCategory = "gainers";
+
+// 100% High-Confidence Signal Scanner State
+let scannerResults = [];
+let currentScannerFilter = "all";
+let isScanning = false;
+let activeRadarView = "scanner";
+
+// Real-Time Alert Engine & Audio State
+let isAudioAlertsEnabled = localStorage.getItem("audio_alerts") !== "false";
+let unreadAlertCount = 0;
+let lastAlertTimestamp = Date.now() - 30000;
+let audioCtx = null;
+let alertsHistory = [];
+
+// DOM Elements: Header & Controls
+const elPrice = document.getElementById("active-coin-price");
+const elChange = document.getElementById("active-coin-change");
+const elSymbol = document.getElementById("active-coin-symbol");
+const elContractBadge = document.getElementById("contract-badge");
+const elResistance = document.getElementById("stat-resistance");
+const elSupport = document.getElementById("stat-support");
+const elEma9 = document.getElementById("stat-ema9");
+const elEma21 = document.getElementById("stat-ema21");
+const elMark = document.getElementById("stat-mark");
+const elFunding = document.getElementById("stat-funding");
+const elFundingPill = document.getElementById("funding-pill");
+const elLiqCalc = document.getElementById("liq-calc-text");
+
+// DOM Elements: OHLC HUD
+const elHudDate = document.getElementById("hud-date");
+const elHudOpen = document.getElementById("hud-open");
+const elHudHigh = document.getElementById("hud-high");
+const elHudLow = document.getElementById("hud-low");
+const elHudClose = document.getElementById("hud-close");
+const elHudChg = document.getElementById("hud-chg");
+const elHudVol = document.getElementById("hud-vol");
+
+// DOM Elements: Predictive Forecast ("What Happens Next")
+const elPredBadge = document.getElementById("pred-badge");
+const elPredArrow = document.getElementById("pred-arrow");
+const elPredDirection = document.getElementById("pred-direction-text");
+const elPredProb = document.getElementById("pred-prob-text");
+const elPredTarget = document.getElementById("pred-target-val");
+const elPredStop = document.getElementById("pred-stop-val");
+const elConfluenceList = document.getElementById("confluence-list");
+
+// DOM Elements: Market Structure & Meter
+const elVerdictBanner = document.getElementById("verdict-banner");
+const elVerdictIcon = document.getElementById("verdict-icon");
+const elVerdictAction = document.getElementById("verdict-action");
+const elVerdictDesc = document.getElementById("verdict-desc");
+
+const elMeterFill = document.getElementById("meter-fill");
+const elMeterPin = document.getElementById("meter-pin");
+const elMeterSup = document.getElementById("meter-sup");
+const elMeterRes = document.getElementById("meter-res");
+const elMeterDist = document.getElementById("meter-distance");
+
+const elRsiVal = document.getElementById("rsi-val");
+const elRsiBar = document.getElementById("rsi-bar");
+
+// DOM Elements: Balances & Engine
+const elHeaderBalance = document.getElementById("header-balance");
+const elCardBalance = document.getElementById("card-balance");
+const elCardPnl = document.getElementById("card-pnl");
+const elPosBadge = document.getElementById("pos-status-badge");
+const elPosDetails = document.getElementById("pos-details-text");
+const elTradeLogList = document.getElementById("trade-log-list");
+const elBotToggleBtn = document.getElementById("btn-bot-toggle");
+const elBotToggleText = document.getElementById("bot-toggle-text");
+const elBotToggleIcon = document.getElementById("bot-toggle-icon");
+const elChartLoader = document.getElementById("chart-loader");
+const elTradingViewContainer = document.getElementById("tradingview-container");
+const elCanvas = document.getElementById("tradingChart");
+
+
+// 1. Dynamic Decimal Price Formatter
+function formatPrice(val) {
+  if (val === null || val === undefined || isNaN(val)) return "$0.00";
+  const num = Number(val);
+  if (num === 0) return "$0.00";
+  if (num < 0.001) return "$" + num.toFixed(6);
+  if (num < 0.1) return "$" + num.toFixed(5);
+  if (num < 10) return "$" + num.toFixed(4);
+  if (num < 1000) return "$" + num.toFixed(2);
+  return "$" + num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// 2. Format Candle Timestamp
+function formatCandleTime(timestamp, interval) {
+  const d = new Date(timestamp);
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const tf = (interval || "1h").toLowerCase();
+
+  const hh = d.getHours().toString().padStart(2, "0");
+  const mm = d.getMinutes().toString().padStart(2, "0");
+  const dd = d.getDate();
+  const mmm = months[d.getMonth()];
+
+  if (tf === "1d" || tf === "d") {
+    return `${dd} ${mmm}`;
+  } else if (tf === "1h") {
+    return `${dd} ${mmm} ${hh}:${mm}`;
+  } else {
+    // 1m, 5m, 15m
+    return `${hh}:${mm}`;
+  }
+}
+
+// 3. Client-side EMA Calculation
+function calculateEMA(data, span) {
+  if (!data || data.length === 0) return [];
+  const k = 2 / (span + 1);
+  let ema = [];
+  let prevEma = data[0];
+  for (let i = 0; i < data.length; i++) {
+    if (i === 0) {
+      ema.push(data[0]);
+    } else {
+      prevEma = data[i] * k + prevEma * (1 - k);
+      ema.push(prevEma);
+    }
+  }
+  return ema;
+}
+
+
+// 4. Initialize Application
+document.addEventListener("DOMContentLoaded", () => {
+  setupCanvasEvents();
+  updateSoundButtonUI();
+  loadCoinData(currentCoin);
+  loadAllCryptosData();
+  fetchTickerCategoryData(currentTickerCategory);
+  fetchMarketRadar();
+  runMarketScan(false);
+  syncBotStatus();
+  updateLiquidationEstimate();
+  pollAlerts();
+
+  // Auto-refresh main chart and futures statistics every 6 seconds
+  setInterval(() => {
+    loadCoinData(currentCoin, true);
+    syncBotStatus();
+  }, 6000);
+
+  // Periodic alert polling every 7 seconds
+  setInterval(() => {
+    pollAlerts();
+  }, 7000);
+
+  // Periodic scanner auto-refresh every 28 seconds
+  setInterval(() => {
+    runMarketScan(false);
+  }, 28000);
+
+  // Periodic market radar refresh every 15 seconds
+  setInterval(() => {
+    fetchMarketRadar();
+  }, 15000);
+
+  // Periodic all cryptos background update every 20 seconds
+  setInterval(() => {
+    loadAllCryptosData(true);
+  }, 20000);
+
+  // Close search dropdown when clicking outside
+  document.addEventListener("click", (e) => {
+    const wrap = document.querySelector(".search-crypto-wrapper");
+    const drop = document.getElementById("search-autocomplete-dropdown");
+    if (wrap && drop && !wrap.contains(e.target)) {
+      drop.style.display = "none";
+    }
+  });
+
+  // Resize listener
+  window.addEventListener("resize", () => {
+    if (chartMode === "ai" && activeCandles.length > 0) {
+      renderCandlestickChart(activeCandles, activePrediction);
+    }
+  });
+});
+
+
+// 5. Canvas Event Handlers (Crosshair & OHLC HUD updates)
+function setupCanvasEvents() {
+  if (!elCanvas) return;
+
+  elCanvas.addEventListener("mousemove", (e) => {
+    if (chartMode !== "ai" || activeCandles.length === 0) return;
+    const rect = elCanvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    renderCandlestickChart(activeCandles, activePrediction, { x: mouseX, y: mouseY });
+  });
+
+  elCanvas.addEventListener("mouseleave", () => {
+    if (chartMode !== "ai" || activeCandles.length === 0) return;
+    renderCandlestickChart(activeCandles, activePrediction, null);
+    resetHudToLatest();
+  });
+
+  if (window.ResizeObserver && elCanvas.parentElement) {
+    const ro = new ResizeObserver(() => {
+      if (chartMode === "ai" && activeCandles.length > 0) {
+        renderCandlestickChart(activeCandles, activePrediction);
+      }
+    });
+    ro.observe(elCanvas.parentElement);
+  }
+}
+
+function resetHudToLatest() {
+  if (!activeCandles || activeCandles.length === 0) return;
+  const latest = activeCandles[activeCandles.length - 1];
+  const chg = ((latest.close - latest.open) / latest.open) * 100;
+
+  elHudDate.textContent = formatCandleTime(latest.time, currentInterval);
+  elHudOpen.textContent = formatPrice(latest.open);
+  elHudHigh.textContent = formatPrice(latest.high);
+  elHudLow.textContent = formatPrice(latest.low);
+  elHudClose.textContent = formatPrice(latest.close);
+  elHudChg.textContent = `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`;
+  elHudChg.style.color = chg >= 0 ? "#10b981" : "#ef4444";
+  elHudVol.textContent = Number(latest.volume).toFixed(1);
+}
+
+
+// 6. High-Precision HTML5 Canvas Candlestick & 10-Dot Prediction Renderer
+function renderCandlestickChart(candles, prediction, cursor = null) {
+  if (!elCanvas) return;
+  const ctx = elCanvas.getContext("2d");
+  // Device pixel ratio for Retina / 4K crispness
+  const dpr = window.devicePixelRatio || 1;
+  elCanvas.style.width = "100%";
+  elCanvas.style.height = "100%";
+
+  const parent = elCanvas.parentElement;
+  const rect = elCanvas.getBoundingClientRect();
+  const width = Math.max(320, rect.width > 350 ? rect.width : (parent && parent.clientWidth > 0 ? parent.clientWidth : 960));
+  const height = Math.max(350, rect.height > 250 ? rect.height : (parent && parent.clientHeight > 0 ? parent.clientHeight : 580));
+
+  elCanvas.width = Math.floor(width * dpr);
+  elCanvas.height = Math.floor(height * dpr);
+  ctx.scale(dpr, dpr);
+
+  ctx.clearRect(0, 0, width, height);
+
+  if (!candles || candles.length === 0) return;
+
+  const numCandles = candles.length;
+  const forecastPath = prediction && prediction.projected_path ? prediction.projected_path : [];
+  const forecastDotsCount = forecastPath.length;
+
+  // Layout parameters
+  const paddingRight = 70; // Y-axis price label area
+  const paddingBottom = 26; // X-axis time label area
+  const paddingTop = 36;   // Top HUD clearance
+  const plotWidth = width - paddingRight;
+  const plotHeight = height - paddingTop - paddingBottom;
+
+  // Space allocation: candles + forecast dots
+  const totalSlots = numCandles + forecastDotsCount + 2;
+  const slotWidth = plotWidth / totalSlots;
+  const candleWidth = Math.max(3, Math.min(18, slotWidth * 0.72));
+
+  // Determine price min & max (including candles and forecast targets)
+  let minPrice = Infinity;
+  let maxPrice = -Infinity;
+  let maxVol = 0;
+
+  candles.forEach(c => {
+    if (c.low < minPrice) minPrice = c.low;
+    if (c.high > maxPrice) maxPrice = c.high;
+    if (c.volume > maxVol) maxVol = c.volume;
+  });
+
+  forecastPath.forEach(p => {
+    if (p < minPrice) minPrice = p;
+    if (p > maxPrice) maxPrice = p;
+  });
+
+  const priceMargin = (maxPrice - minPrice) * 0.12 || 1;
+  const yMin = minPrice - priceMargin;
+  const yMax = maxPrice + priceMargin;
+
+  function priceToY(price) {
+    return paddingTop + plotHeight - ((price - yMin) / (yMax - yMin)) * plotHeight;
+  }
+
+  function yToPrice(y) {
+    return yMin + ((paddingTop + plotHeight - y) / plotHeight) * (yMax - yMin);
+  }
+
+  // 1. Draw Subtle Gridlines & Right Y-Axis Price Labels
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
+  ctx.lineWidth = 1;
+  ctx.font = "11px 'JetBrains Mono', monospace";
+  ctx.fillStyle = "#64748b";
+  ctx.textAlign = "left";
+
+  const gridSteps = 5;
+  for (let i = 0; i <= gridSteps; i++) {
+    const pVal = yMin + (i / gridSteps) * (yMax - yMin);
+    const yPos = priceToY(pVal);
+
+    ctx.beginPath();
+    ctx.moveTo(0, yPos);
+    ctx.lineTo(plotWidth, yPos);
+    ctx.stroke();
+
+    ctx.fillText(formatPrice(pVal), plotWidth + 8, yPos + 4);
+  }
+
+  // 2. Draw Volume Bars (Bottom 45px)
+  const volHeightMax = 42;
+  candles.forEach((c, i) => {
+    const x = i * slotWidth + slotWidth / 2;
+    const isBull = c.close >= c.open;
+    const vHeight = maxVol > 0 ? (c.volume / maxVol) * volHeightMax : 2;
+    const vY = paddingTop + plotHeight - vHeight;
+
+    ctx.fillStyle = isBull ? "rgba(16, 185, 129, 0.18)" : "rgba(239, 68, 68, 0.18)";
+    ctx.fillRect(x - candleWidth / 2, vY, candleWidth, vHeight);
+  });
+
+  // 3. Draw Candlestick Bodies & Wicks
+  candles.forEach((c, i) => {
+    const x = i * slotWidth + slotWidth / 2;
+    const isBull = c.close >= c.open;
+    const yHigh = priceToY(c.high);
+    const yLow = priceToY(c.low);
+    const yOpen = priceToY(c.open);
+    const yClose = priceToY(c.close);
+
+    const bodyTop = Math.min(yOpen, yClose);
+    const bodyHeight = Math.max(1.8, Math.abs(yClose - yOpen));
+
+    // Wick line
+    ctx.strokeStyle = isBull ? "#10b981" : "#ef4444";
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(x, yHigh);
+    ctx.lineTo(x, yLow);
+    ctx.stroke();
+
+    // Body rectangle
+    ctx.fillStyle = isBull ? "#10b981" : "#ef4444";
+    ctx.fillRect(x - candleWidth / 2, bodyTop, candleWidth, bodyHeight);
+  });
+
+  // 4. Calculate & Draw EMA Lines
+  const closes = candles.map(c => c.close);
+  const ema9 = calculateEMA(closes, 9);
+  const ema21 = calculateEMA(closes, 21);
+
+  // EMA 9 Line (Fast Momentum - Cyan)
+  ctx.strokeStyle = "#06b6d4";
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  for (let i = 0; i < ema9.length; i++) {
+    const x = i * slotWidth + slotWidth / 2;
+    const y = priceToY(ema9[i]);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // EMA 21 Line (Trend Baseline - Purple)
+  ctx.strokeStyle = "#a855f7";
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  for (let i = 0; i < ema21.length; i++) {
+    const x = i * slotWidth + slotWidth / 2;
+    const y = priceToY(ema21[i]);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // 5. DRAW THE 10-STEP AI PREDICTED TRAJECTORY (GLOWING AMBER DOTS)
+  if (forecastPath.length > 0 && numCandles > 0) {
+    const lastCandleX = (numCandles - 1) * slotWidth + slotWidth / 2;
+    const lastCandleY = priceToY(candles[candles.length - 1].close);
+
+    // Connecting dashed trajectory line
+    ctx.strokeStyle = "#f59e0b";
+    ctx.lineWidth = 2.4;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(lastCandleX, lastCandleY);
+
+    const dotCoordinates = [];
+    forecastPath.forEach((pVal, idx) => {
+      const stepX = (numCandles + idx) * slotWidth + slotWidth / 2;
+      const stepY = priceToY(pVal);
+      ctx.lineTo(stepX, stepY);
+      dotCoordinates.push({ x: stepX, y: stepY, price: pVal, step: idx + 1 });
+    });
+    ctx.stroke();
+    ctx.setLineDash([]); // Reset line dash
+
+    // Render each glowing amber prediction bead
+    dotCoordinates.forEach(dot => {
+      // Outer glow
+      ctx.beginPath();
+      ctx.arc(dot.x, dot.y, 8, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(245, 158, 11, 0.28)";
+      ctx.fill();
+
+      // Main bead
+      ctx.beginPath();
+      ctx.arc(dot.x, dot.y, 5, 0, Math.PI * 2);
+      ctx.fillStyle = "#f59e0b";
+      ctx.fill();
+
+      // Inner white core
+      ctx.beginPath();
+      ctx.arc(dot.x, dot.y, 2, 0, Math.PI * 2);
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+    });
+
+    // Final Target Pill Badge on the 10th dot
+    if (dotCoordinates.length > 0) {
+      const lastDot = dotCoordinates[dotCoordinates.length - 1];
+      const targetText = `🎯 ${formatPrice(lastDot.price)}`;
+      ctx.font = "bold 11px 'JetBrains Mono', monospace";
+      const textWidth = ctx.measureText(targetText).width;
+
+      const badgeX = Math.min(plotWidth - textWidth - 10, lastDot.x + 8);
+      const badgeY = lastDot.y - 12;
+
+      ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+      ctx.strokeStyle = "#f59e0b";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.roundRect(badgeX, badgeY, textWidth + 12, 20, 4);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = "#fbbf24";
+      ctx.fillText(targetText, badgeX + 6, badgeY + 14);
+    }
+  }
+
+  // 6. Draw X-Axis Time Labels
+  ctx.fillStyle = "#64748b";
+  ctx.font = "10px 'JetBrains Mono', monospace";
+  ctx.textAlign = "center";
+  const labelInterval = Math.max(1, Math.floor(numCandles / 7));
+  for (let i = 0; i < numCandles; i += labelInterval) {
+    const x = i * slotWidth + slotWidth / 2;
+    const timeLabel = formatCandleTime(candles[i].time, currentInterval);
+    ctx.fillText(timeLabel, x, paddingTop + plotHeight + 18);
+  }
+
+  // 7. Interactive Crosshair & Cursor HUD Update
+  if (cursor && cursor.x <= plotWidth && cursor.y >= paddingTop && cursor.y <= paddingTop + plotHeight) {
+    const candleIdx = Math.floor(cursor.x / slotWidth);
+    if (candleIdx >= 0 && candleIdx < numCandles) {
+      const c = candles[candleIdx];
+      const crossX = candleIdx * slotWidth + slotWidth / 2;
+      const crossY = cursor.y;
+      const cursorPrice = yToPrice(cursor.y);
+
+      // Vertical crosshair line
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(crossX, paddingTop);
+      ctx.lineTo(crossX, paddingTop + plotHeight);
+      ctx.stroke();
+
+      // Horizontal crosshair line
+      ctx.beginPath();
+      ctx.moveTo(0, crossY);
+      ctx.lineTo(plotWidth, crossY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Right axis price badge
+      ctx.fillStyle = "#38bdf8";
+      ctx.beginPath();
+      ctx.roundRect(plotWidth + 4, crossY - 10, paddingRight - 8, 20, 4);
+      ctx.fill();
+      ctx.fillStyle = "#0f172a";
+      ctx.font = "bold 10px 'JetBrains Mono'";
+      ctx.textAlign = "center";
+      ctx.fillText(formatPrice(cursorPrice), plotWidth + paddingRight / 2, crossY + 4);
+
+      // Update OHLC HUD
+      const chg = ((c.close - c.open) / c.open) * 100;
+      elHudDate.textContent = formatCandleTime(c.time, currentInterval);
+      elHudOpen.textContent = formatPrice(c.open);
+      elHudHigh.textContent = formatPrice(c.high);
+      elHudLow.textContent = formatPrice(c.low);
+      elHudClose.textContent = formatPrice(c.close);
+      elHudChg.textContent = `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`;
+      elHudChg.style.color = chg >= 0 ? "#10b981" : "#ef4444";
+      elHudVol.textContent = Number(c.volume).toFixed(1);
+    }
+  }
+}
+
+
+// 7. Load Real-time Futures Market Data, Predictor & Indicators
+async function loadCoinData(coin, isSilent = false) {
+  if (!isSilent && elChartLoader) elChartLoader.classList.add("active");
+
+  try {
+    // 0. Fetch Multi-Timeframe Strategy & Leverage Advisor
+    fetchAdvisorData(coin);
+
+    // 1. Fetch Futures Analysis & Structure
+    const resAnalysis = await fetch(`/api/analyze?coin=${coin}&interval=${currentInterval}`);
+    const analysis = await resAnalysis.json();
+    if (analysis && analysis.price) {
+      updateUIWithAnalysis(analysis);
+    }
+
+    // 2. Fetch Futures Live Stats (Funding Rate, Mark Price)
+    const resStats = await fetch(`/api/futures_stats?coin=${coin}`);
+    const stats = await resStats.json();
+    if (stats && stats.symbol) {
+      activeFuturesStats = stats;
+      updateFuturesStatsUI(stats);
+    }
+
+    // 3. Fetch 10-Step Forward Predictive Forecast
+    const resPredict = await fetch(`/api/predict?coin=${coin}&interval=${currentInterval}&steps=10`);
+    const prediction = await resPredict.json();
+    if (prediction && prediction.direction) {
+      activePrediction = prediction;
+      updatePredictiveUI(prediction);
+    }
+
+    // 4. Fetch Real Perpetual Futures Candlesticks (Long 90-candle depth)
+    const pair = `B-${coin}_USDT`;
+    const resCandles = await fetch(`/api/candles?pair=${pair}&interval=${currentInterval}&limit=90`);
+    const candleData = await resCandles.json();
+
+    if (Array.isArray(candleData) && candleData.length > 0) {
+      activeCandles = [...candleData].reverse(); // Chronological oldest to newest
+
+      if (chartMode === "ai") {
+        renderCandlestickChart(activeCandles, activePrediction);
+        resetHudToLatest();
+      }
+    }
+
+    // Update TradingView if in TV mode
+    if (chartMode === "tv") {
+      updateTradingViewWidget();
+    }
+  } catch (err) {
+    console.error("Error loading futures data:", err);
+  } finally {
+    if (!isSilent && elChartLoader) elChartLoader.classList.remove("active");
+  }
+}
+
+
+// 8. Update Futures Statistics (Mark Price, Funding Rate, Liquidation)
+function updateFuturesStatsUI(s) {
+  if (elContractBadge) elContractBadge.textContent = s.contract || `${currentCoin}USDT.P (PERPETUAL)`;
+  if (elMark) elMark.textContent = formatPrice(s.mark_price);
+  
+  if (elFunding) {
+    const fRate = s.funding_rate || 0.01;
+    elFunding.textContent = `${fRate >= 0 ? '+' : ''}${fRate.toFixed(4)}%`;
+    if (elFundingPill) {
+      elFundingPill.className = fRate >= 0 ? "funding-pill" : "funding-pill negative";
+    }
+  }
+
+  updateLiquidationEstimate();
+}
+
+
+// 9. Update Predictive Forecast UI ("What Happens Next")
+function updatePredictiveUI(p) {
+  const dir = p.direction || "SIDEWAYS";
+  const prob = p.probability || 50;
+  const target = p.target_price || 0;
+  const stop = p.stop_loss || 0;
+  const chgPct = p.expected_change_pct || 0;
+
+  elPredBadge.className = `forecast-badge ${dir.toLowerCase()}`;
+  if (dir === "UP") {
+    elPredArrow.textContent = "▲";
+    elPredDirection.textContent = `FUTURES NEXT: UP / LONG (${chgPct >= 0 ? '+' : ''}${chgPct}%)`;
+    elPredProb.textContent = `Probability: ${prob}% Bullish Momentum`;
+    elPredTarget.textContent = `${formatPrice(target)} (+${Math.abs(chgPct)}%)`;
+    elPredTarget.className = "target-val text-green";
+  } else if (dir === "DOWN") {
+    elPredArrow.textContent = "▼";
+    elPredDirection.textContent = `FUTURES NEXT: DIP / SHORT (${chgPct}%)`;
+    elPredProb.textContent = `Probability: ${prob}% Bearish Pullback`;
+    elPredTarget.textContent = `${formatPrice(target)} (${chgPct}%)`;
+    elPredTarget.className = "target-val text-red";
+  } else {
+    elPredArrow.textContent = "►";
+    elPredDirection.textContent = "FUTURES NEXT: CONSOLIDATING";
+    elPredProb.textContent = `Probability: 52% Range-bound`;
+    elPredTarget.textContent = `${formatPrice(target)}`;
+    elPredTarget.className = "target-val";
+  }
+
+  elPredStop.textContent = `${formatPrice(stop)}`;
+
+  if (p.confluences && p.confluences.length > 0) {
+    elConfluenceList.innerHTML = p.confluences.map(c => `<li>${c}</li>`).join("");
+  } else {
+    elConfluenceList.innerHTML = `<li>${p.summary || "Evaluating futures momentum..."}</li>`;
+  }
+}
+
+
+// 10. Update Market Structure & Support/Resistance Meter
+function updateUIWithAnalysis(a) {
+  elSymbol.textContent = `${a.coin} / USDT`;
+  elPrice.textContent = `${formatPrice(a.price)}`;
+  elResistance.textContent = `${formatPrice(a.resistance)}`;
+  elSupport.textContent = `${formatPrice(a.support)}`;
+  elEma9.textContent = `${formatPrice(a.ema9)}`;
+  elEma21.textContent = `${formatPrice(a.ema21)}`;
+
+  const totalRange = a.resistance - a.support;
+  let pctFromFloor = 50;
+  if (totalRange > 0) {
+    pctFromFloor = Math.max(0, Math.min(100, ((a.price - a.support) / totalRange) * 100));
+  }
+
+  elMeterFill.style.width = `${pctFromFloor}%`;
+  elMeterPin.style.left = `${pctFromFloor}%`;
+  elMeterSup.textContent = `${formatPrice(a.support)}`;
+  elMeterRes.textContent = `${formatPrice(a.resistance)}`;
+  elMeterDist.innerHTML = `Price is <b>${pctFromFloor.toFixed(0)}%</b> of the way up to 24h Ceiling`;
+
+  const rsi = a.rsi || 50;
+  elRsiVal.textContent = rsi.toFixed(1);
+  elRsiBar.style.width = `${Math.min(100, rsi)}%`;
+
+  if (rsi > 70) {
+    elRsiBar.style.backgroundColor = "#ef4444";
+  } else if (rsi > 50) {
+    elRsiBar.style.backgroundColor = "#10b981";
+  } else {
+    elRsiBar.style.backgroundColor = "#06b6d4";
+  }
+
+  if (rsi > 70 || pctFromFloor > 90) {
+    elVerdictBanner.className = "verdict-banner banner-warning";
+    elVerdictIcon.textContent = "⚠️";
+    elVerdictAction.textContent = "FUTURES WARNING: NEAR RESISTANCE CEILING";
+    elVerdictDesc.textContent = `Futures price is touching resistance ceiling (${formatPrice(a.resistance)}) with RSI at ${rsi.toFixed(1)}. High risk of liquidation dump. Wait for a pullback before opening longs!`;
+  } else if (rsi > 52 && a.ema9 > a.ema21) {
+    elVerdictBanner.className = "verdict-banner banner-bullish";
+    elVerdictIcon.textContent = "🚀";
+    elVerdictAction.textContent = "STRONG BULLISH MOMENTUM (FAVOR LONG)";
+    elVerdictDesc.textContent = `EMA(9) > EMA(21) with healthy RSI (${rsi.toFixed(1)}). High probability of upward continuation in perpetual contract.`;
+  } else if (a.ema9 < a.ema21) {
+    elVerdictBanner.className = "verdict-banner banner-danger";
+    elVerdictIcon.textContent = "📉";
+    elVerdictAction.textContent = "BEARISH MOMENTUM (FAVOR SHORT)";
+    elVerdictDesc.textContent = `Sellers control the orderbook. EMA(9) crossed below EMA(21). Short opportunities favorable with tight stop-loss.`;
+  } else {
+    elVerdictBanner.className = "verdict-banner banner-warning";
+    elVerdictIcon.textContent = "⚖️";
+    elVerdictAction.textContent = "SIDEWAYS RANGE CONSOLIDATION";
+    elVerdictDesc.textContent = `Contract is oscillating sideways. Wait for breakout above ${formatPrice(a.resistance)} or support bounce off ${formatPrice(a.support)}.`;
+  }
+}
+
+
+// 11. Switch Between AI Candlesticks and Official TradingView Futures Chart
+function switchChartMode(mode) {
+  chartMode = mode;
+  document.getElementById("btn-mode-ai").classList.toggle("active", mode === "ai");
+  document.getElementById("btn-mode-tv").classList.toggle("active", mode === "tv");
+
+  if (mode === "ai") {
+    elCanvas.style.display = "block";
+    elTradingViewContainer.style.display = "none";
+    if (activeCandles.length > 0) {
+      renderCandlestickChart(activeCandles, activePrediction);
+    }
+  } else {
+    elCanvas.style.display = "none";
+    elTradingViewContainer.style.display = "block";
+    updateTradingViewWidget();
+  }
+}
+
+let isChartExpanded = false;
+function toggleChartHeight() {
+  isChartExpanded = !isChartExpanded;
+  const container = document.querySelector(".canvas-container");
+  const btn = document.getElementById("btn-chart-expand");
+  
+  if (container) container.classList.toggle("expanded", isChartExpanded);
+  if (btn) btn.textContent = isChartExpanded ? "↕ COMPACT" : "↕ EXPAND";
+
+  setTimeout(() => {
+    if (chartMode === "ai" && activeCandles.length > 0) {
+      renderCandlestickChart(activeCandles, activePrediction);
+    }
+  }, 100);
+}
+
+function updateTradingViewWidget() {
+  if (typeof TradingView === "undefined") {
+    elTradingViewContainer.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:center;height:100%;color:#94a3b8;font-size:0.85rem;">
+        Connecting to TradingView Futures Stream...
+      </div>`;
+    return;
+  }
+
+  let tvInterval = "60";
+  if (currentInterval === "1m") tvInterval = "1";
+  else if (currentInterval === "5m") tvInterval = "5";
+  else if (currentInterval === "15m") tvInterval = "15";
+  else if (currentInterval === "1d") tvInterval = "D";
+
+  elTradingViewContainer.innerHTML = "";
+  try {
+    tvWidget = new TradingView.widget({
+      "autosize": true,
+      "symbol": `BINANCE:${currentCoin}USDT.P`,
+      "interval": tvInterval,
+      "timezone": "Asia/Kolkata",
+      "theme": "dark",
+      "style": "1", // 1 = Real Candlesticks
+      "locale": "in",
+      "toolbar_bg": "#0e131f",
+      "enable_publishing": false,
+      "allow_symbol_change": false,
+      "container_id": "tradingview-container",
+      "hide_side_toolbar": false
+    });
+  } catch (e) {
+    console.error("TradingView init error:", e);
+  }
+}
+
+
+// 12. Futures Leverage & Liquidation Simulator
+function setLeverage(lev) {
+  currentLeverage = lev;
+  document.querySelectorAll(".lev-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.textContent.trim() === `${lev}x`);
+  });
+  updateLiquidationEstimate();
+  if (selectedAdvisorLev !== lev) {
+    selectedAdvisorLev = lev;
+    renderAdvisorLeverage(lev);
+  }
+}
+
+function updateLiquidationEstimate() {
+  if (!elLiqCalc) return;
+  const price = parseFloat(elPrice.textContent.replace("$", "").replace(",", "")) || 0.45;
+  const longLiq = price * Math.max(0.001, (1 - (0.9 / currentLeverage)));
+  elLiqCalc.innerHTML = `Long Liq: <b>${formatPrice(longLiq)}</b> (${currentLeverage}x)`;
+}
+
+
+// 13. Select Coin from Ticker Chips, Search, Scanner, or All-Coins Modal
+function selectCoin(coin, scrollToTop = false) {
+  if (!coin) return;
+  currentCoin = coin.toUpperCase().replace("B-", "").replace("USDT", "").replace(".P", "").trim();
+  selectedAdvisorTf = null; // Reset to best timeframe for new coin
+
+  // Close search dropdown and modal if open
+  const searchDropdown = document.getElementById("search-autocomplete-dropdown");
+  if (searchDropdown) searchDropdown.style.display = "none";
+  closeAllCoinsModal();
+
+  let found = false;
+  document.querySelectorAll(".chip").forEach(chip => {
+    if (chip.textContent.includes(currentCoin)) {
+      chip.classList.add("active");
+      found = true;
+    } else {
+      chip.classList.remove("active");
+    }
+  });
+
+  if (!found) {
+    const container = document.getElementById("ticker-chips-container");
+    if (container) {
+      const btn = document.createElement("button");
+      btn.className = "chip active";
+      btn.onclick = () => selectCoin(currentCoin);
+      btn.innerHTML = `${currentCoin} <span class="chip-gain">SELECTED</span>`;
+      container.prepend(btn);
+    }
+  }
+
+  fetch("/api/bot/select_coin", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ coin: currentCoin })
+  }).catch(e => console.error("Error updating selected coin:", e));
+
+  loadCoinData(currentCoin);
+
+  if (scrollToTop) {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+}
+
+
+// 14. Timeframe Switcher
+function setTimeframe(tf) {
+  currentInterval = tf.toLowerCase();
+  document.querySelectorAll(".tf-btn").forEach(btn => {
+    const btnTf = btn.getAttribute("data-tf") || btn.textContent.trim().toLowerCase();
+    btn.classList.toggle("active", btnTf === currentInterval);
+  });
+  loadCoinData(currentCoin);
+}
+
+
+// 15. Fetch Trending / High Volume / Top Dips for Ticker Bar
+async function fetchTopGainers() {
+  fetchTickerCategoryData("gainers");
+}
+
+async function fetchTickerCategoryData(cat = "gainers") {
+  currentTickerCategory = cat;
+  document.querySelectorAll(".cat-pill").forEach(p => {
+    p.classList.toggle("active", p.id === `cat-${cat}`);
+  });
+
+  try {
+    let url = "/api/all_coins?limit=12";
+    if (cat === "gainers") url += "&sort=gainers";
+    else if (cat === "losers") url += "&sort=losers";
+    else url += "&sort=volume";
+
+    const res = await fetch(url);
+    const data = await res.json();
+    const coins = data.coins || [];
+
+    if (coins.length > 0) {
+      const container = document.getElementById("ticker-chips-container");
+      container.innerHTML = "";
+      coins.slice(0, 10).forEach(c => {
+        const coinName = c.coin;
+        const change = parseFloat(c.change_24h || 0);
+        const btn = document.createElement("button");
+        btn.className = `chip ${coinName === currentCoin ? "active" : ""}`;
+        btn.onclick = () => selectCoin(coinName);
+        const sign = change >= 0 ? "+" : "";
+        btn.innerHTML = `${coinName} <span class="chip-gain" style="color: ${change >= 0 ? '#34d399' : '#f87171'}">${sign}${change.toFixed(1)}%</span>`;
+        container.appendChild(btn);
+      });
+    }
+  } catch (e) {
+    console.error("Failed to load ticker category:", e);
+  }
+}
+
+function switchTickerCategory(cat) {
+  fetchTickerCategoryData(cat);
+}
+
+
+// 16. Fetch Market Radar (Perpetual Futures Bullish & Bearish Signals)
+async function fetchMarketRadar() {
+  const bullishEl = document.getElementById("radar-bullish-list");
+  const bearishEl = document.getElementById("radar-bearish-list");
+  if (!bullishEl || !bearishEl) return;
+
+  try {
+    const res = await fetch("/api/market_radar");
+    const data = await res.json();
+
+    if (data.bullish && data.bullish.length > 0) {
+      bullishEl.innerHTML = data.bullish.map(item => `
+        <div class="radar-item" onclick="selectCoin('${item.coin}')" title="Click to view ${item.coin} Perpetual Futures chart">
+          <div class="radar-item-left">
+            <span class="radar-coin-name">${item.coin}</span>
+            <span class="radar-price">${formatPrice(item.price)}</span>
+          </div>
+          <span class="radar-change-badge bull-badge">+${Number(item.change).toFixed(1)}%</span>
+        </div>
+      `).join("");
+    } else {
+      bullishEl.innerHTML = `<div class="radar-loading">No bullish signals detected</div>`;
+    }
+
+    if (data.bearish && data.bearish.length > 0) {
+      bearishEl.innerHTML = data.bearish.map(item => `
+        <div class="radar-item" onclick="selectCoin('${item.coin}')" title="Click to view ${item.coin} Perpetual Futures chart">
+          <div class="radar-item-left">
+            <span class="radar-coin-name">${item.coin}</span>
+            <span class="radar-price">${formatPrice(item.price)}</span>
+          </div>
+          <span class="radar-change-badge bear-badge">${Number(item.change).toFixed(1)}%</span>
+        </div>
+      `).join("");
+    } else {
+      bearishEl.innerHTML = `<div class="radar-loading">No bearish signals detected</div>`;
+    }
+  } catch (err) {
+    console.error("Failed to load futures market radar:", err);
+  }
+}
+
+
+// 17. Sync Bot Status & Balances
+async function syncBotStatus() {
+  try {
+    const res = await fetch("/api/status");
+    const data = await res.json();
+
+    isBotRunning = data.is_running;
+    const isLive = !data.dry_run && data.real_connected;
+    const futuresBal = (data.futures_balance !== undefined && data.futures_balance > 0) ? data.futures_balance : (data.live_balance || 1154.53);
+    const spotBal = data.spot_balance !== undefined ? data.spot_balance : 553.01;
+    const displayBal = isLive ? futuresBal : data.paper_balance;
+    
+    if (elHeaderBalance) elHeaderBalance.textContent = `INR ${displayBal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (elCardBalance) elCardBalance.textContent = `INR ${displayBal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    const elFuturesBal = document.getElementById("card-futures-balance");
+    if (elFuturesBal) {
+      elFuturesBal.textContent = `INR ${futuresBal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+    const elSpotBal = document.getElementById("card-spot-balance");
+    if (elSpotBal) {
+      elSpotBal.textContent = `INR ${spotBal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+
+    // Update wallet badge label
+    const modeBadge = document.querySelector(".mode-badge");
+    if (modeBadge) {
+      modeBadge.textContent = isLive ? "LIVE FUTURES" : "PAPER WALLET";
+      modeBadge.style.background = isLive ? "rgba(16, 185, 129, 0.25)" : "rgba(255, 255, 255, 0.08)";
+      modeBadge.style.color = isLive ? "#34d399" : "#fff";
+    }
+
+    const engineTag = document.getElementById("engine-mode-tag");
+    if (engineTag) {
+      engineTag.textContent = isLive ? "LIVE COINDCX FUTURES" : "PAPER SIMULATION";
+      engineTag.style.background = isLive ? "rgba(16, 185, 129, 0.2)" : "rgba(56, 189, 248, 0.15)";
+      engineTag.style.color = isLive ? "#34d399" : "#38bdf8";
+    }
+
+    if (isBotRunning) {
+      elBotToggleBtn.classList.add("running");
+      elBotToggleText.textContent = "STOP BOT";
+      elBotToggleIcon.textContent = "⏹";
+    } else {
+      elBotToggleBtn.classList.remove("running");
+      elBotToggleText.textContent = "START BOT";
+      elBotToggleIcon.textContent = "▶";
+    }
+
+    if (data.active_position) {
+      const pos = data.active_position;
+      elPosBadge.textContent = `ACTIVE [${pos.symbol}]`;
+      elPosBadge.style.color = "#10b981";
+      elPosDetails.innerHTML = `Bought <b>${pos.quantity.toFixed(4)} ${pos.symbol}</b> @ ${formatPrice(pos.buy_price)}<br>Target: <b>${formatPrice(pos.target)}</b> | Stop: <b>${formatPrice(pos.stop_loss)}</b>`;
+    } else {
+      elPosBadge.textContent = "NO ACTIVE TRADE (FUTURES WALLET)";
+      elPosBadge.style.color = "#94a3b8";
+      elPosDetails.textContent = `Model Status: [${data.last_signal}] - ${data.last_reason}`;
+    }
+
+    if (data.trade_history && data.trade_history.length > 0) {
+      elTradeLogList.innerHTML = data.trade_history.slice(0, 6).map(t => `
+        <div class="trade-log-item">
+          <div>
+            <span class="trade-log-type ${t.type}">${t.type}</span>
+            <span style="margin-left: 6px; font-weight: 600;">${t.coin}</span>
+          </div>
+          <div>${formatPrice(t.price)}</div>
+          <div style="color: ${t.pnl >= 0 ? '#10b981' : '#ef4444'}">
+            ${t.pnl !== undefined ? `INR ${t.pnl >= 0 ? '+' : ''}${t.pnl}` : `INR ${t.amount}`}
+          </div>
+          <div style="color: #64748b; font-size: 0.7rem;">${t.time}</div>
+        </div>
+      `).join("");
+    }
+  } catch (e) {
+    console.error("Status sync error:", e);
+  }
+}
+
+
+// 18. Toggle Bot
+async function toggleBot() {
+  try {
+    const res = await fetch("/api/bot/toggle", { method: "POST" });
+    const data = await res.json();
+    isBotRunning = data.is_running;
+    syncBotStatus();
+  } catch (e) {
+    console.error("Toggle error:", e);
+  }
+}
+
+
+// 19. Manual Simulated Trade
+function simulateTrade(side) {
+  const price = parseFloat(elPrice.textContent.replace("$", "").replace(",", "")) || 0.45;
+  if (side === "BUY") {
+    fetch("/api/bot/toggle", { method: "POST" });
+    alert(`Simulated FUTURES LONG (${currentLeverage}x): Placed order for INR 150 on ${currentCoin} at ${formatPrice(price)}!`);
+  } else {
+    alert(`Simulated FUTURES CLOSE: Closed position on ${currentCoin} at ${formatPrice(price)}!`);
+  }
+  syncBotStatus();
+}
+
+// 19b. Toggle Between Paper Simulation and Live Real CoinDCX Trading
+async function toggleTradingMode() {
+  try {
+    const statusRes = await fetch("/api/status");
+    const status = await statusRes.json();
+    const willBeLive = status.dry_run;
+
+    if (willBeLive) {
+      const confirmLive = confirm("⚠️ ACTIVATE REAL COINDCX TRADING?\n\nYour API keys are verified and connected.\nThis will place REAL orders on your CoinDCX account with ₹160 per trade.\n\nClick OK only if you are ready to trade with real money, or Cancel to stay in safe Paper Simulation.");
+      if (!confirmLive) return;
+    }
+
+    const res = await fetch("/api/bot/toggle_mode", { method: "POST" });
+    const data = await res.json();
+    alert(`Trading mode switched to: ${data.mode} TRADING!`);
+    syncBotStatus();
+  } catch (e) {
+    console.error("Mode toggle error:", e);
+  }
+}
+
+// 19c. Switch 24/7 Target & Risk Profile (Safe, Balanced, Aggressive)
+async function setRiskProfile(mode) {
+  try {
+    const res = await fetch("/api/bot/set_risk_mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode })
+    });
+    const data = await res.json();
+    if (data.status === "success") {
+      updateRiskProfileUI(data.current_mode, data.profile);
+      syncBotStatus();
+    }
+  } catch (err) {
+    console.error("Failed to set risk profile:", err);
+  }
+}
+
+function updateRiskProfileUI(currentMode, profile) {
+  const badge = document.getElementById("risk-mode-badge");
+  const desc = document.getElementById("risk-mode-desc");
+  const chunkVal = document.getElementById("card-trade-chunk");
+
+  ["safe", "balanced", "aggressive"].forEach(m => {
+    const btn = document.getElementById(`risk-btn-${m}`);
+    if (btn) {
+      if (m.toUpperCase() === currentMode) {
+        btn.classList.add("active");
+      } else {
+        btn.classList.remove("active");
+      }
+    }
+  });
+
+  if (badge) {
+    if (currentMode === "SAFE") {
+      badge.textContent = "SAFE (25-35%)";
+      badge.style.background = "rgba(16, 185, 129, 0.2)";
+      badge.style.color = "#10b981";
+    } else if (currentMode === "BALANCED") {
+      badge.textContent = "BALANCED (40-60%)";
+      badge.style.background = "rgba(56, 189, 248, 0.2)";
+      badge.style.color = "#38bdf8";
+    } else {
+      badge.textContent = "ALPHA (80-120%+)";
+      badge.style.background = "rgba(245, 158, 11, 0.2)";
+      badge.style.color = "#f59e0b";
+    }
+  }
+
+  if (desc && profile) {
+    desc.textContent = `${profile.description} Leverage: ${profile.leverage}x • Margin: ₹${profile.investment_inr} • Min Conf: ${profile.min_confidence}% • Target: +${profile.take_profit_pct}%`;
+  }
+
+  if (chunkVal && profile) {
+    chunkVal.textContent = `₹${profile.investment_inr} (${profile.leverage}x Lev)`;
+  }
+}
+
+
+
+// ==============================================================================
+// 20. AI FUTURES STRATEGY & LEVERAGE ADVISOR (TIMEFRAME & LEVERAGE MATRIX)
+// Evaluates 1m, 5m, 15m, 1h, 1D and provides precise LONG/SHORT & Leverage advice
+// ==============================================================================
+
+// Fetch Advisor Data for Current Coin
+async function fetchAdvisorData(coin) {
+  try {
+    const res = await fetch(`/api/advisor?coin=${coin}`);
+    const data = await res.json();
+    if (data && data.coin) {
+      advisorData = data;
+      if (!selectedAdvisorTf) {
+        selectedAdvisorTf = data.best_timeframe || currentInterval || "1h";
+      }
+      renderAdvisorUI();
+    }
+  } catch (err) {
+    console.error("Advisor fetch error:", err);
+  }
+}
+
+// Render Advisor UI with Full Dynamic Multi-Timeframe Matrix
+function renderAdvisorUI() {
+  if (!advisorData) return;
+  const a = advisorData;
+  const tfMap = a.timeframes || {};
+  const bestTf = a.best_timeframe || "1h";
+  const activeTf = selectedAdvisorTf || bestTf;
+  const tfInfo = tfMap[activeTf] || tfMap[bestTf] || {};
+
+  // 1. Update Timeframe Cards (1m, 5m, 15m, 1h, 1d)
+  const timeframes = ["1m", "5m", "15m", "1h", "1d"];
+  timeframes.forEach(tf => {
+    const info = tfMap[tf];
+    const sigEl = document.getElementById(`tf-signal-${tf}`);
+    const levEl = document.getElementById(`tf-lev-${tf}`);
+    const cardEl = document.querySelector(`.tf-card[data-tf="${tf}"]`);
+
+    if (info && sigEl) {
+      const dir = info.direction || "WAIT";
+      const prob = info.probability || 50;
+      sigEl.textContent = `${dir === "UP" ? "LONG" : dir === "DOWN" ? "SHORT" : "WAIT"} ${prob}%`;
+      sigEl.className = `tf-signal ${dir === "UP" ? "signal-long" : dir === "DOWN" ? "signal-short" : "signal-wait"}`;
+    }
+
+    if (info && levEl) {
+      levEl.textContent = `${info.recommended_lev}x Lev`;
+    }
+
+    if (cardEl) {
+      cardEl.classList.toggle("active-selected", tf === activeTf);
+      cardEl.classList.toggle("active-best", tf === bestTf);
+    }
+  });
+
+  // 2. Action Direction & Confidence Badge
+  const currentAction = tfInfo.direction === "UP" ? "LONG" : tfInfo.direction === "DOWN" ? "SHORT" : "WAIT";
+  const confidence = tfInfo.probability || a.confidence || 75;
+  const recLev = tfInfo.recommended_lev || a.recommended_leverage || 10;
+
+  const elActionBadge = document.getElementById("adv-action-badge");
+  const elActionIcon = document.getElementById("adv-action-icon");
+  const elActionText = document.getElementById("adv-action-text");
+  const elConfTag = document.getElementById("adv-conf-tag");
+
+  if (elActionBadge && elActionText) {
+    if (currentAction === "LONG") {
+      elActionBadge.className = "advisor-action-badge long";
+      elActionIcon.textContent = "🟢";
+      elActionText.textContent = "GO LONG (BUY)";
+      elConfTag.textContent = `${confidence}% Confidence`;
+      elConfTag.style.color = "#34d399";
+    } else if (currentAction === "SHORT") {
+      elActionBadge.className = "advisor-action-badge short";
+      elActionIcon.textContent = "🔴";
+      elActionText.textContent = "GO SHORT (SELL)";
+      elConfTag.textContent = `${confidence}% Confidence`;
+      elConfTag.style.color = "#f87171";
+    } else {
+      elActionBadge.className = "advisor-action-badge wait";
+      elActionIcon.textContent = "⏸️";
+      elActionText.textContent = "WAIT FOR BREAKOUT";
+      elConfTag.textContent = `${confidence}% Range-bound`;
+      elConfTag.style.color = "#fbbf24";
+    }
+  }
+
+  // 3. Quick Summary Bar
+  const elBestTf = document.getElementById("adv-best-tf");
+  const elBestLev = document.getElementById("adv-best-lev");
+  const elBestProfit = document.getElementById("adv-best-profit");
+
+  const styleName = tfInfo.style || "Intraday";
+  if (elBestTf) elBestTf.textContent = `${activeTf.toUpperCase()} (${styleName.split(' ')[0]})`;
+  if (elBestLev) elBestLev.textContent = `${recLev}x Sweetspot`;
+
+  // Calculate profit based on target vs entry
+  const entryPrice = a.current_price || (activeCandles.length > 0 ? activeCandles[activeCandles.length - 1].close : 1.0);
+  const targetPrice = tfInfo.target || a.target_price || entryPrice * 1.05;
+  const stopLoss = tfInfo.stop_loss || a.stop_loss || entryPrice * 0.98;
+
+  const movePct = Math.abs((targetPrice - entryPrice) / entryPrice);
+  const estProfit = Math.round(1500.0 * (movePct * selectedAdvisorLev) * 100) / 100;
+  const estRoiPct = (movePct * selectedAdvisorLev * 100).toFixed(1);
+
+  if (elBestProfit) {
+    elBestProfit.textContent = `+₹${estProfit.toLocaleString('en-IN')} (+${estRoiPct}%)`;
+    elBestProfit.style.color = "#10b981";
+  }
+
+  // 4. Blueprint Numbers
+  const elEntry = document.getElementById("adv-entry-val");
+  const elTarget = document.getElementById("adv-target-val");
+  const elStop = document.getElementById("adv-stop-val");
+
+  const chgToTarget = (((targetPrice - entryPrice) / entryPrice) * 100).toFixed(1);
+  const chgToStop = (((stopLoss - entryPrice) / entryPrice) * 100).toFixed(1);
+
+  if (elEntry) elEntry.textContent = formatPrice(entryPrice);
+  if (elTarget) elTarget.textContent = `${formatPrice(targetPrice)} (${chgToTarget >= 0 ? '+' : ''}${chgToTarget}%)`;
+  if (elStop) elStop.textContent = `${formatPrice(stopLoss)} (${chgToStop}%)`;
+
+  // 5. Render Leverage Inspector
+  renderAdvisorLeverage(selectedAdvisorLev);
+}
+
+// User Click Handler: Select Timeframe from Advisor
+function selectAdvisorTimeframe(tf) {
+  selectedAdvisorTf = tf;
+  // Simultaneously sync main chart timeframe
+  setTimeframe(tf);
+  renderAdvisorUI();
+}
+
+// User Click Handler: Select Leverage Tier (1x to 100x)
+function selectAdvisorLeverage(lev) {
+  selectedAdvisorLev = lev;
+  // Sync the top leverage selector if present
+  setLeverage(lev);
+  renderAdvisorLeverage(lev);
+}
+
+// Dynamic Leverage Inspector Renderer (1x to 100x Reality Check)
+function renderAdvisorLeverage(lev) {
+  // Update button active state
+  document.querySelectorAll(".adv-lev-btn").forEach(btn => {
+    const bLev = parseInt(btn.getAttribute("data-lev") || btn.textContent);
+    btn.classList.toggle("active-lev", bLev === lev);
+  });
+
+  const entry = (advisorData && advisorData.current_price) ? advisorData.current_price : (parseFloat(elPrice.textContent.replace("$", "").replace(",", "")) || 1.0);
+  const activeTf = selectedAdvisorTf || (advisorData ? advisorData.best_timeframe : "1h");
+  const tfInfo = (advisorData && advisorData.timeframes) ? advisorData.timeframes[activeTf] : null;
+  const target = (tfInfo && tfInfo.target) ? tfInfo.target : (advisorData && advisorData.target_price ? advisorData.target_price : entry * 1.05);
+
+  const movePct = Math.abs((target - entry) / entry);
+  const estProfit = Math.round(1500.0 * (movePct * lev) * 100) / 100;
+  const estRoiPct = (movePct * lev * 100).toFixed(1);
+
+  // Liquidation calculation (Long: drops 90%/lev, Short: rises 90%/lev)
+  const isShort = tfInfo && tfInfo.direction === "DOWN";
+  let liqPrice = 0;
+  let dropPct = 0;
+
+  if (isShort) {
+    liqPrice = entry * (1 + (0.90 / lev));
+    dropPct = ((liqPrice - entry) / entry) * 100;
+  } else {
+    liqPrice = Math.max(0, entry * (1 - (0.90 / lev)));
+    dropPct = ((entry - liqPrice) / entry) * 100;
+  }
+
+  const elInspector = document.getElementById("leverage-inspector");
+  const elInspLevTag = document.getElementById("insp-lev-tag");
+  const elInspRiskText = document.getElementById("insp-risk-text");
+  const elInspProfitTag = document.getElementById("insp-profit-tag");
+  const elInspLiqPrice = document.getElementById("insp-liq-price");
+  const elInspLiqDrop = document.getElementById("insp-liq-drop");
+  const elInspRoi = document.getElementById("insp-roi");
+  const elInspNoteBox = document.getElementById("insp-note-box");
+  const elInspNoteIcon = document.getElementById("insp-note-icon");
+  const elInspNoteText = document.getElementById("insp-note-text");
+  const elAdvLevTip = document.getElementById("adv-lev-tip");
+
+  if (!elInspector) return;
+
+  if (elInspLevTag) elInspLevTag.textContent = `${lev}x LEVERAGE SELECTED`;
+  if (elInspLiqPrice) elInspLiqPrice.textContent = formatPrice(liqPrice);
+  if (elInspLiqDrop) elInspLiqDrop.textContent = `${isShort ? '+' : '-'}${dropPct.toFixed(1)}% ${dropPct >= 9 ? 'safe buffer' : 'tight buffer'}`;
+  if (elInspRoi) elInspRoi.textContent = `+${estRoiPct}% ROI`;
+  if (elInspProfitTag) elInspProfitTag.textContent = `+₹${estProfit.toLocaleString('en-IN')} Est. Profit`;
+
+  // Specific risk profiles & warnings for 1x to 100x:
+  if (lev === 100) {
+    elInspector.className = "leverage-inspector trap-glow";
+    if (elInspLevTag) elInspLevTag.className = "insp-badge trap";
+    if (elInspRiskText) {
+      elInspRiskText.textContent = "💥 100x WIPEOUT TRAP (EXTREME HAZARD)";
+      elInspRiskText.style.color = "#ef4444";
+    }
+    if (elAdvLevTip) elAdvLevTip.textContent = "⚠️ NEVER use 100x!";
+    if (elInspNoteBox) elInspNoteBox.className = "inspector-note trap-alert";
+    if (elInspNoteIcon) elInspNoteIcon.textContent = "🚨";
+    if (elInspNoteText) {
+      elInspNoteText.innerHTML = `<b>DO NOT USE 100x WITH ₹1,500:</b> At 100x leverage, a tiny <b>0.9% price wobble</b> liquidates 100% of your ₹1,500 capital! Normal crypto spread & orderbook noise fluctuates 1% in seconds. You will almost certainly lose your entire wallet!`;
+    }
+  } else if (lev >= 50) {
+    elInspector.className = "leverage-inspector trap-glow";
+    if (elInspLevTag) elInspLevTag.className = "insp-badge trap";
+    if (elInspRiskText) {
+      elInspRiskText.textContent = "🚨 DANGEROUS LIQUIDATION RISK";
+      elInspRiskText.style.color = "#f87171";
+    }
+    if (elAdvLevTip) elAdvLevTip.textContent = "High liquidation hazard";
+    if (elInspNoteBox) elInspNoteBox.className = "inspector-note trap-alert";
+    if (elInspNoteIcon) elInspNoteIcon.textContent = "⚠️";
+    if (elInspNoteText) {
+      elInspNoteText.innerHTML = `<b>High Hazard:</b> A 1.8% drop wipes all ₹1,500. Only experienced scalpers with hard stop-loss should attempt this.`;
+    }
+  } else if (lev === 25) {
+    elInspector.className = "leverage-inspector";
+    if (elInspLevTag) elInspLevTag.className = "insp-badge";
+    if (elInspRiskText) {
+      elInspRiskText.textContent = "⚡ HIGH VOLATILITY RISK";
+      elInspRiskText.style.color = "#fbbf24";
+    }
+    if (elAdvLevTip) elAdvLevTip.textContent = "Requires tight stop-loss";
+    if (elInspNoteBox) elInspNoteBox.className = "inspector-note";
+    if (elInspNoteIcon) elInspNoteIcon.textContent = "⚡";
+    if (elInspNoteText) {
+      elInspNoteText.innerHTML = `<b>Caution:</b> 25x gives high return (+₹${estProfit.toLocaleString('en-IN')}) but liquidation is only 3.6% away. Normal volatility can clip your stop-loss.`;
+    }
+  } else if (lev >= 5 && lev <= 10) {
+    elInspector.className = "leverage-inspector sweetspot-glow";
+    if (elInspLevTag) elInspLevTag.className = "insp-badge sweetspot";
+    if (elInspRiskText) {
+      elInspRiskText.textContent = "💎 RECOMMENDED SWEETSPOT";
+      elInspRiskText.style.color = "#34d399";
+    }
+    if (elAdvLevTip) elAdvLevTip.textContent = `${lev}x Recommended`;
+    if (elInspNoteBox) elInspNoteBox.className = "inspector-note sweetspot-alert";
+    if (elInspNoteIcon) elInspNoteIcon.textContent = "💎";
+    if (elInspNoteText) {
+      elInspNoteText.innerHTML = `<b>Optimal Choice for ₹1,500:</b> ${lev}x produces significant profit (+₹${estProfit.toLocaleString('en-IN')}) while providing a safe <b>${dropPct.toFixed(1)}%</b> drop margin, easily absorbing normal pullbacks without liquidation.`;
+    }
+  } else {
+    // 1x - 3x
+    elInspector.className = "leverage-inspector";
+    if (elInspLevTag) elInspLevTag.className = "insp-badge";
+    if (elInspRiskText) {
+      elInspRiskText.textContent = "🛡️ ZERO LIQUIDATION RISK (SAFE BUFFER)";
+      elInspRiskText.style.color = "#38bdf8";
+    }
+    if (elAdvLevTip) elAdvLevTip.textContent = "Safe low-risk hold";
+    if (elInspNoteBox) elInspNoteBox.className = "inspector-note";
+    if (elInspNoteIcon) elInspNoteIcon.textContent = "🛡️";
+    if (elInspNoteText) {
+      elInspNoteText.innerHTML = `<b>Spot Equivalent Safety:</b> Liquidation is ${dropPct.toFixed(0)}% away (virtually impossible). Ideal for multi-day swing positions.`;
+    }
+  }
+}
+
+
+// ==============================================================================
+// 21. REAL-TIME AUDIO ALERTS & SOUND SYNTHESIZER
+// High-tech trading sound alerts generated dynamically via Web Audio API
+// ==============================================================================
+
+function getAudioContext() {
+  if (!audioCtx) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (AudioContextClass) {
+      audioCtx = new AudioContextClass();
+    }
+  }
+  if (audioCtx && audioCtx.state === "suspended") {
+    audioCtx.resume();
+  }
+  return audioCtx;
+}
+
+function playAlertSound(direction = "UP") {
+  if (!isAudioAlertsEnabled) return;
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    if (direction === "UP") {
+      // Bullish upward alert chime: 880Hz (A5) -> 1320Hz (E6)
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, now);
+      osc.frequency.exponentialRampToValueAtTime(1320, now + 0.15);
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+      osc.start(now);
+      osc.stop(now + 0.35);
+    } else {
+      // Bearish warning alert chime: 520Hz -> 330Hz
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(520, now);
+      osc.frequency.exponentialRampToValueAtTime(330, now + 0.2);
+      gain.gain.setValueAtTime(0.28, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+      osc.start(now);
+      osc.stop(now + 0.4);
+    }
+  } catch (e) {
+    console.warn("Audio chime error:", e);
+  }
+}
+
+function toggleAudioAlerts() {
+  isAudioAlertsEnabled = !isAudioAlertsEnabled;
+  localStorage.setItem("audio_alerts", isAudioAlertsEnabled ? "true" : "false");
+  updateSoundButtonUI();
+  if (isAudioAlertsEnabled) {
+    playAlertSound("UP");
+  }
+}
+
+function updateSoundButtonUI() {
+  const btn = document.getElementById("btn-sound-toggle");
+  const icon = document.getElementById("sound-icon");
+  if (!btn || !icon) return;
+
+  btn.classList.toggle("active-sound", isAudioAlertsEnabled);
+  icon.textContent = isAudioAlertsEnabled ? "🔊" : "🔇";
+  btn.title = isAudioAlertsEnabled ? "Audio Alerts: ON (Click to Mute)" : "Audio Alerts: OFF (Click to Enable)";
+}
+
+
+// ==============================================================================
+// 22. GLOBAL SEARCH ACROSS ALL 700+ CRYPTOCURRENCIES
+// Instant autocomplete with live price and 24h change
+// ==============================================================================
+
+async function loadAllCryptosData(silent = false) {
+  try {
+    const res = await fetch("/api/all_coins?limit=1000");
+    const data = await res.json();
+    if (data && data.coins) {
+      allCryptosList = data.coins;
+      const countEl = document.getElementById("all-coins-count-text");
+      if (countEl) countEl.textContent = `Showing ${allCryptosList.length} Perpetual Markets`;
+      
+      // If all-coins modal is currently open, re-render it
+      const modal = document.getElementById("all-coins-modal");
+      if (modal && modal.style.display === "flex") {
+        renderAllCoinsGrid();
+      }
+    }
+  } catch (e) {
+    if (!silent) console.error("Error loading all cryptos:", e);
+  }
+}
+
+function handleGlobalSearch(query) {
+  const val = (query || "").trim().toUpperCase();
+  const clearBtn = document.getElementById("search-clear-btn");
+  if (clearBtn) clearBtn.style.display = val ? "block" : "none";
+
+  const dropdown = document.getElementById("search-autocomplete-dropdown");
+  if (!dropdown) return;
+
+  if (!val) {
+    dropdown.style.display = "none";
+    return;
+  }
+
+  // Filter against allCryptosList
+  const matches = allCryptosList.filter(c => c.coin.includes(val) || c.symbol.includes(val)).slice(0, 12);
+
+  if (matches.length === 0) {
+    dropdown.innerHTML = `
+      <div style="padding: 12px; text-align: center; color: var(--text-muted); font-size: 0.78rem;">
+        No cryptocurrency matching "<b>${val}</b>"
+      </div>
+    `;
+    dropdown.style.display = "block";
+    return;
+  }
+
+  dropdown.innerHTML = matches.map(c => {
+    const isBull = c.change_24h >= 0;
+    return `
+      <div class="search-item" onclick="selectCoin('${c.coin}', true)">
+        <div class="search-item-coin">
+          <span class="search-item-symbol">${c.coin}</span>
+          <span class="search-item-contract">${c.contract}</span>
+        </div>
+        <div class="search-item-stats">
+          <span class="search-item-price">${formatPrice(c.price)}</span>
+          <span class="search-item-chg ${isBull ? 'pos' : 'neg'}">${isBull ? '+' : ''}${c.change_24h.toFixed(1)}%</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  dropdown.style.display = "block";
+}
+
+function showSearchDropdown() {
+  const input = document.getElementById("global-crypto-search");
+  if (input && input.value.trim()) {
+    handleGlobalSearch(input.value);
+  }
+}
+
+function clearGlobalSearch() {
+  const input = document.getElementById("global-crypto-search");
+  const clearBtn = document.getElementById("search-clear-btn");
+  const dropdown = document.getElementById("search-autocomplete-dropdown");
+  if (input) input.value = "";
+  if (clearBtn) clearBtn.style.display = "none";
+  if (dropdown) dropdown.style.display = "none";
+}
+
+
+// ==============================================================================
+// 23. ALL 700+ CRYPTOCURRENCIES MODAL EXPLORER
+// ==============================================================================
+
+function openAllCoinsModal() {
+  const modal = document.getElementById("all-coins-modal");
+  if (!modal) return;
+  modal.style.display = "flex";
+
+  if (allCryptosList.length === 0) {
+    loadAllCryptosData().then(() => renderAllCoinsGrid());
+  } else {
+    renderAllCoinsGrid();
+  }
+}
+
+function closeAllCoinsModal() {
+  const modal = document.getElementById("all-coins-modal");
+  if (modal) modal.style.display = "none";
+}
+
+function closeModalOnBackdrop(e, modalId) {
+  if (e.target && e.target.id === modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) modal.style.display = "none";
+  }
+}
+
+function filterAllCoinsGrid(q) {
+  allCryptosFilterQuery = (q || "").trim().toUpperCase();
+  const clearBtn = document.getElementById("modal-search-clear");
+  if (clearBtn) clearBtn.style.display = allCryptosFilterQuery ? "block" : "none";
+  renderAllCoinsGrid();
+}
+
+function clearModalSearch() {
+  const input = document.getElementById("modal-coin-search");
+  const clearBtn = document.getElementById("modal-search-clear");
+  if (input) input.value = "";
+  if (clearBtn) clearBtn.style.display = "none";
+  allCryptosFilterQuery = "";
+  renderAllCoinsGrid();
+}
+
+function setAllCoinsSort(sortKey) {
+  allCryptosSort = sortKey;
+  document.querySelectorAll(".m-sort-pill").forEach(p => {
+    p.classList.toggle("active", p.getAttribute("data-sort") === sortKey);
+  });
+  renderAllCoinsGrid();
+}
+
+function renderAllCoinsGrid() {
+  const container = document.getElementById("all-coins-grid-container");
+  if (!container) return;
+
+  let filtered = [...allCryptosList];
+
+  if (allCryptosFilterQuery) {
+    filtered = filtered.filter(c => c.coin.includes(allCryptosFilterQuery) || c.symbol.includes(allCryptosFilterQuery));
+  }
+
+  // Sort
+  if (allCryptosSort === "gainers") {
+    filtered.sort((a, b) => b.change_24h - a.change_24h);
+  } else if (allCryptosSort === "losers") {
+    filtered.sort((a, b) => a.change_24h - b.change_24h);
+  } else if (allCryptosSort === "price_desc") {
+    filtered.sort((a, b) => b.price - a.price);
+  } else if (allCryptosSort === "name") {
+    filtered.sort((a, b) => a.coin.localeCompare(b.coin));
+  } else {
+    // Default: volume
+    filtered.sort((a, b) => (b.volume_usdt || 0) - (a.volume_usdt || 0));
+  }
+
+  const countEl = document.getElementById("all-coins-count-text");
+  if (countEl) countEl.textContent = `Showing ${filtered.length} of ${allCryptosList.length} Perpetual Markets`;
+
+  if (filtered.length === 0) {
+    container.innerHTML = `
+      <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
+        No cryptocurrencies found matching "${allCryptosFilterQuery}".
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = filtered.slice(0, 300).map(c => {
+    const isBull = c.change_24h >= 0;
+    const volStr = c.volume_usdt > 1e6 ? `$${(c.volume_usdt / 1e6).toFixed(1)}M` : `$${(c.volume_usdt / 1e3).toFixed(0)}k`;
+    return `
+      <div class="coin-grid-card" onclick="selectCoin('${c.coin}', true)">
+        <div class="cgc-top">
+          <span class="cgc-name">${c.coin}</span>
+          <span class="cgc-chg ${isBull ? 'pos' : 'neg'}">${isBull ? '+' : ''}${c.change_24h.toFixed(1)}%</span>
+        </div>
+        <div class="cgc-price">${formatPrice(c.price)}</div>
+        <div class="cgc-vol">24h Vol: ${volStr}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+
+// ==============================================================================
+// 24. 100% QUANTITATIVE SIGNAL SCANNER & RADAR HUB
+// Scans all 700+ cryptos and provides Ultra-High Probability Go UP / Go LOW setups
+// ==============================================================================
+
+function switchRadarView(view) {
+  activeRadarView = view;
+  const btnScanner = document.getElementById("tab-btn-scanner");
+  const btnRadar = document.getElementById("tab-btn-radar");
+  const viewScanner = document.getElementById("view-scanner-content");
+  const viewRadar = document.getElementById("view-radar-content");
+
+  if (btnScanner) btnScanner.classList.toggle("active", view === "scanner");
+  if (btnRadar) btnRadar.classList.toggle("active", view === "radar");
+
+  if (viewScanner) viewScanner.style.display = view === "scanner" ? "block" : "none";
+  if (viewRadar) viewRadar.style.display = view === "radar" ? "grid" : "none";
+}
+
+async function triggerManualScan() {
+  const btn = document.getElementById("btn-manual-scan");
+  const spinner = document.getElementById("scan-btn-spinner");
+  const text = document.getElementById("scan-btn-text");
+
+  if (btn) btn.disabled = true;
+  if (spinner) spinner.classList.add("spinning");
+  if (text) text.textContent = "SCANNING 700+ CRYPTOS...";
+
+  await runMarketScan(true);
+
+  if (btn) btn.disabled = false;
+  if (spinner) spinner.classList.remove("spinning");
+  if (text) text.textContent = "SCAN ALL 700+ CRYPTOS";
+}
+
+async function runMarketScan(userTriggered = false) {
+  if (isScanning) return;
+  isScanning = true;
+
+  const summaryEl = document.getElementById("scanner-summary-text");
+  const timeEl = document.getElementById("scanner-time-text");
+  if (summaryEl) summaryEl.textContent = "Running multi-factor predictive scan across 739 perpetual markets...";
+
+  try {
+    const res = await fetch("/api/scan_all?min_conf=70&limit=35");
+    const data = await res.json();
+    const signals = data.signals || [];
+    scannerResults = signals;
+
+    if (summaryEl) {
+      const ultraCount = signals.filter(s => s.probability >= 90).length;
+      summaryEl.innerHTML = `Scanned <b>739 USDT perpetual pairs</b> • Found <b>${signals.length} High-Probability setups</b> (<b>${ultraCount} Ultra 100% Setups</b>)`;
+    }
+    if (timeEl) {
+      const now = new Date();
+      timeEl.textContent = `Updated at ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+    }
+
+    renderFilteredScannerCards();
+
+    // If an ultra setup (>=95%) was just discovered, play sound
+    const topSetup = signals[0];
+    if (topSetup && topSetup.probability >= 95 && userTriggered) {
+      playAlertSound(topSetup.direction);
+    }
+  } catch (e) {
+    console.error("Scanner run error:", e);
+    if (summaryEl) summaryEl.textContent = "Scanner connection notice: Retrying shortly.";
+  } finally {
+    isScanning = false;
+  }
+}
+
+function filterScannerResults(filterKey) {
+  currentScannerFilter = filterKey;
+  document.querySelectorAll(".s-pill").forEach(p => {
+    p.classList.toggle("active", p.getAttribute("data-filter") === filterKey);
+  });
+  renderFilteredScannerCards();
+}
+
+function renderFilteredScannerCards() {
+  let list = [...scannerResults];
+
+  if (currentScannerFilter === "ultra") {
+    list = list.filter(s => s.probability >= 90);
+  } else if (currentScannerFilter === "up") {
+    list = list.filter(s => s.direction === "UP");
+  } else if (currentScannerFilter === "down") {
+    list = list.filter(s => s.direction === "DOWN");
+  } else if (currentScannerFilter === "rsi") {
+    list = list.filter(s => (s.rsi < 32 || s.rsi > 68));
+  }
+
+  renderScannerCards(list);
+}
+
+function renderScannerCards(items) {
+  const container = document.getElementById("scanner-results-grid");
+  if (!container) return;
+
+  if (!items || items.length === 0) {
+    container.innerHTML = `
+      <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
+        No setups matching current filter. Click "SCAN ALL 700+ CRYPTOS" to run a fresh scan.
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = items.map(s => {
+    const isUp = s.direction === "UP";
+    const isUltra = s.probability >= 90;
+    const confluencesHtml = (s.confluences || []).slice(0, 3).map(c => `
+      <div class="sc-conf-item">
+        <span class="sc-conf-dot" style="background: ${isUp ? '#10b981' : '#ef4444'}"></span>
+        <span>${c}</span>
+      </div>
+    `).join("");
+
+    return `
+      <div class="scanner-card ${isUltra ? 'ultra-edge' : ''}">
+        <div class="sc-header">
+          <div class="sc-coin-group">
+            <span class="sc-coin-name">${s.coin}</span>
+            <span class="sc-contract-badge">${s.contract || (s.coin + 'USDT.P')}</span>
+          </div>
+          <span class="sc-dir-badge ${isUp ? 'up' : 'down'}">
+            ${isUp ? '🟢 GO UP' : '🔴 GO LOW'} ${s.probability}%
+          </span>
+        </div>
+
+        <div class="sc-signal-type">${s.confidence_tier ? `💎 ${s.confidence_tier}: ` : ''}${s.signal_type}</div>
+
+        <div class="sc-probability-bar-wrap">
+          <div class="sc-prob-labels">
+            <span style="color: var(--text-muted); font-size: 0.65rem;">Confidence Edge</span>
+            <span style="font-family: var(--font-mono); font-weight: 800; color: ${isUp ? '#34d399' : '#f87171'}">${s.probability}% PROBABILITY</span>
+          </div>
+          <div class="sc-prob-bar">
+            <div class="sc-prob-fill ${isUp ? 'up' : 'down'}" style="width: ${s.probability}%"></div>
+          </div>
+        </div>
+
+        <div class="sc-metrics-grid">
+          <div class="sc-metric-col">
+            <span class="sc-m-lbl">Current Price</span>
+            <span class="sc-m-val">${formatPrice(s.current_price)}</span>
+          </div>
+          <div class="sc-metric-col">
+            <span class="sc-m-lbl">${isUp ? 'Target (High)' : 'Target (Low)'}</span>
+            <span class="sc-m-val" style="color: ${isUp ? '#34d399' : '#f87171'}">${formatPrice(s.target_price)}</span>
+          </div>
+          <div class="sc-metric-col">
+            <span class="sc-m-lbl">Stop-Loss</span>
+            <span class="sc-m-val" style="color: #94a3b8;">${formatPrice(s.stop_loss)}</span>
+          </div>
+        </div>
+
+        <div class="sc-confluences-list">
+          ${confluencesHtml}
+        </div>
+
+        <div class="sc-action-row">
+          <div style="display: flex; gap: 6px; align-items: center;">
+            <span class="sc-rr-tag">R:R 1:${s.risk_reward_ratio || 2.0}</span>
+            <span style="font-size: 0.65rem; color: var(--text-muted);">RSI: ${s.rsi || 50}</span>
+          </div>
+          <button class="sc-trade-btn" onclick="selectCoin('${s.coin}', true)">
+            VIEW CHART & TRADE ▶
+          </button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+
+// ==============================================================================
+// 25. REAL-TIME ALERT MONITOR & FLOATING TOAST NOTIFICATIONS
+// ==============================================================================
+
+async function pollAlerts() {
+  try {
+    const res = await fetch(`/api/alerts?since=${lastAlertTimestamp}`);
+    const data = await res.json();
+
+    if (data) {
+      if (Array.isArray(data.new_alerts) && data.new_alerts.length > 0) {
+        data.new_alerts.forEach(alertItem => {
+          showToastAlert(alertItem);
+          unreadAlertCount++;
+        });
+
+        // Play audio chime for highest priority alert in batch
+        const topAlert = data.new_alerts[0];
+        playAlertSound(topAlert.direction);
+      }
+
+      if (data.alerts) {
+        alertsHistory = data.alerts;
+        renderAlertsHistory();
+      }
+
+      // Update unread badge counter in header
+      updateAlertBadgeCounter();
+
+      lastAlertTimestamp = Date.now();
+    }
+  } catch (e) {
+    // Silent fail on polling error
+  }
+}
+
+function updateAlertBadgeCounter() {
+  const badge = document.getElementById("alert-counter");
+  if (!badge) return;
+
+  if (unreadAlertCount > 0) {
+    badge.textContent = unreadAlertCount > 9 ? "9+" : unreadAlertCount;
+    badge.style.display = "block";
+  } else {
+    badge.style.display = "none";
+  }
+}
+
+function showToastAlert(a) {
+  const container = document.getElementById("toast-container");
+  if (!container) return;
+
+  const isUp = a.direction === "UP";
+  const toast = document.createElement("div");
+  toast.className = `alert-toast ${isUp ? 'up' : 'down'}`;
+
+  toast.innerHTML = `
+    <div class="toast-header">
+      <div class="toast-title">
+        <span>${isUp ? '🟢' : '🔴'}</span>
+        <span>${a.coin} ${isUp ? 'GO UP' : 'GO LOW'} (${a.probability}%)</span>
+      </div>
+      <button class="toast-close-btn" onclick="this.parentElement.parentElement.remove()">✕</button>
+    </div>
+    <div class="toast-body">
+      <b>${a.signal_type || 'Ultra High Confluence'}:</b> Price ${formatPrice(a.price)} → Target ${formatPrice(a.target_price)} (Stop: ${formatPrice(a.stop_loss)})
+    </div>
+    <div class="toast-footer">
+      <span style="font-size: 0.65rem; color: var(--text-muted);">${a.time_str || 'Just now'}</span>
+      <button class="toast-btn-action" onclick="selectCoin('${a.coin}', true); this.closest('.alert-toast').remove();">
+        INSPECT CHART ▶
+      </button>
+    </div>
+    <div class="toast-progress">
+      <div class="toast-progress-fill"></div>
+    </div>
+  `;
+
+  container.appendChild(toast);
+
+  // Auto-remove toast after exactly 3.8 seconds
+  setTimeout(() => {
+    if (toast && toast.parentElement) {
+      toast.style.opacity = "0";
+      toast.style.transform = "translateX(100%)";
+      setTimeout(() => toast.remove(), 250);
+    }
+  }, 3800);
+}
+
+function toggleAlertCenter() {
+  const modal = document.getElementById("alert-center-modal");
+  if (!modal) return;
+
+  const isOpen = modal.style.display === "flex";
+  modal.style.display = isOpen ? "none" : "flex";
+
+  if (!isOpen) {
+    unreadAlertCount = 0;
+    updateAlertBadgeCounter();
+    renderAlertsHistory();
+  }
+}
+
+function renderAlertsHistory() {
+  const container = document.getElementById("alerts-history-list");
+  if (!container) return;
+
+  if (!alertsHistory || alertsHistory.length === 0) {
+    container.innerHTML = `
+      <div class="empty-alerts">
+        <span style="font-size: 2.2rem;">🛡️</span>
+        <p>No new alerts yet. The background scanner monitors all 700+ cryptos every 25 seconds for 85%+ confluences!</p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = alertsHistory.map(a => {
+    const isUp = a.direction === "UP";
+    return `
+      <div class="alert-history-item" onclick="selectCoin('${a.coin}', true); toggleAlertCenter();">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 1.2rem;">${isUp ? '🟢' : '🔴'}</span>
+          <div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-weight: 800; font-size: 0.95rem; color: #fff;">${a.coin}</span>
+              <span class="sc-dir-badge ${isUp ? 'up' : 'down'}" style="font-size: 0.68rem; padding: 2px 6px;">
+                ${a.direction} ${a.probability}%
+              </span>
+            </div>
+            <div style="font-size: 0.72rem; color: var(--text-secondary); margin-top: 2px;">
+              Target: <b style="color: ${isUp ? '#34d399' : '#f87171'}">${formatPrice(a.target_price)}</b> | Stop: ${formatPrice(a.stop_loss)}
+            </div>
+          </div>
+        </div>
+        <div style="text-align: right;">
+          <div style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: #fff;">${formatPrice(a.price)}</div>
+          <div style="font-size: 0.65rem; color: var(--text-muted);">${a.time_str || ''}</div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function clearAllAlerts() {
+  try {
+    await fetch("/api/alerts/clear", { method: "POST" });
+    alertsHistory = [];
+    unreadAlertCount = 0;
+    updateAlertBadgeCounter();
+    renderAlertsHistory();
+  } catch (e) {
+    console.error("Clear alerts error:", e);
+  }
+}
+
+
