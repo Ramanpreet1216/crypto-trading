@@ -89,10 +89,33 @@ class CoinDCXClient:
         elif tf not in ["1m", "5m", "15m", "1h", "1d"]:
             tf = "1h"
 
+        # 1. Primary: CoinDCX Official Public Candles
+        try:
+            url = f"{self.PUBLIC_URL}/market_data/candles"
+            params = {"pair": f"B-{clean}_USDT", "interval": tf, "limit": limit}
+            res = requests.get(url, params=params, timeout=4)
+            if res.status_code == 200:
+                raw = res.json()
+                if isinstance(raw, list) and len(raw) > 0:
+                    candles = []
+                    for c in raw:
+                        candles.append({
+                            "open": float(c.get("open", 0)),
+                            "high": float(c.get("high", 0)),
+                            "low": float(c.get("low", 0)),
+                            "close": float(c.get("close", 0)),
+                            "volume": float(c.get("volume", 0)),
+                            "time": int(c.get("time", 0))
+                        })
+                    return candles
+        except Exception:
+            pass
+
+        # 2. Secondary fallback: Binance Futures
         try:
             url = "https://fapi.binance.com/fapi/v1/klines"
             params = {"symbol": futures_symbol, "interval": tf, "limit": limit}
-            res = requests.get(url, params=params, timeout=6)
+            res = requests.get(url, params=params, timeout=3)
             if res.status_code == 200:
                 raw = res.json()
                 candles = []
@@ -106,10 +129,10 @@ class CoinDCXClient:
                         "time": int(c[0])
                     })
                 return candles
-        except Exception as e:
-            print(f"[Futures API Notice for {futures_symbol}]: {e}")
+        except Exception:
+            pass
 
-        # Fallback to CoinDCX spot candles if futures endpoint is unavailable
+        # Fallback to CoinDCX spot candles
         return self.get_spot_raw_candles(pair=f"B-{clean}_USDT", interval=tf, limit=limit)
 
     def get_futures_stats(self, symbol_or_pair: str) -> dict:
@@ -133,19 +156,42 @@ class CoinDCXClient:
                 "change_24h": round(float(r_t.get("priceChangePercent", 0)), 2),
                 "volume_24h": float(r_t.get("volume", 0)),
             }
-        except Exception as e:
-            return {
-                "symbol": futures_symbol,
-                "contract": f"{clean}USDT.P (Perpetual)",
-                "mark_price": 0.0,
-                "index_price": 0.0,
-                "funding_rate": 0.01,
-                "next_funding_time": 0,
-                "high_24h": 0.0,
-                "low_24h": 0.0,
-                "change_24h": 0.0,
-                "volume_24h": 0.0,
-            }
+        except Exception:
+            pass
+
+        # CoinDCX Public Ticker Fallback
+        try:
+            raw = requests.get(f"{self.PUBLIC_URL}/exchange/ticker", timeout=3).json()
+            for t in raw:
+                if t.get("market") == futures_symbol:
+                    lp = float(t.get("last_price", 0) or 0)
+                    return {
+                        "symbol": futures_symbol,
+                        "contract": f"{clean}USDT.P (Perpetual)",
+                        "mark_price": lp,
+                        "index_price": lp,
+                        "funding_rate": 0.01,
+                        "next_funding_time": int(time.time() * 1000) + 3600000,
+                        "high_24h": float(t.get("high", 0) or lp),
+                        "low_24h": float(t.get("low", 0) or lp),
+                        "change_24h": round(float(t.get("change_24_hour", 0) or 0), 2),
+                        "volume_24h": float(t.get("volume", 0) or 0),
+                    }
+        except Exception:
+            pass
+
+        return {
+            "symbol": futures_symbol,
+            "contract": f"{clean}USDT.P (Perpetual)",
+            "mark_price": 0.0,
+            "index_price": 0.0,
+            "funding_rate": 0.01,
+            "next_funding_time": 0,
+            "high_24h": 0.0,
+            "low_24h": 0.0,
+            "change_24h": 0.0,
+            "volume_24h": 0.0,
+        }
 
     def get_raw_candles(self, pair: str, interval: str = "1h", limit: int = 50) -> list:
         """

@@ -2,7 +2,7 @@
 // COINDCX FUTURES QUANT PRO - PERPETUAL CANDLESTICK & AI PREDICTOR ENGINE
 // ==============================================================================
 
-let currentCoin = "SOON";
+let currentCoin = "BTC";
 let currentInterval = "1h";
 let isBotRunning = false;
 let chartMode = "ai"; // 'ai' or 'tv'

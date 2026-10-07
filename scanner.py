@@ -25,22 +25,51 @@ _TICKER_CACHE = {
 
 
 def _fetch_all_raw_tickers():
-    """Fetches raw 24hr tickers with 5-second caching."""
+    """Fetches raw 24hr tickers with 5-second caching using CoinDCX official public API."""
     global _TICKER_CACHE
     now = time.time()
     if _TICKER_CACHE["data"] and (now - _TICKER_CACHE["timestamp"]) < 5.0:
         return _TICKER_CACHE["data"]
 
+    # 1. Primary: CoinDCX Official Public Ticker (Fast, never blocked in India / cloud)
     try:
-        tickers = requests.get("https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=6).json()
+        raw = requests.get(f"{PUBLIC_URL}/exchange/ticker", timeout=5).json()
+        if isinstance(raw, list) and len(raw) > 0:
+            converted = []
+            for t in raw:
+                m = t.get("market", "")
+                if m.endswith("USDT"):
+                    try:
+                        lp = float(t.get("last_price", 0) or 0)
+                        vol = float(t.get("volume", 0) or 0)
+                        converted.append({
+                            "symbol": m,
+                            "lastPrice": lp,
+                            "priceChangePercent": float(t.get("change_24_hour", 0) or 0),
+                            "highPrice": float(t.get("high", 0) or 0),
+                            "lowPrice": float(t.get("low", 0) or 0),
+                            "volume": vol,
+                            "quoteVolume": round(vol * lp, 2)
+                        })
+                    except (ValueError, TypeError):
+                        continue
+            if converted:
+                _TICKER_CACHE["data"] = converted
+                _TICKER_CACHE["timestamp"] = now
+                return converted
+    except Exception as e:
+        print(f"[CoinDCX Ticker API Notice]: {e}")
+
+    # 2. Secondary fallback: Binance Futures Ticker
+    try:
+        tickers = requests.get("https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=3).json()
         if isinstance(tickers, list) and len(tickers) > 0:
             _TICKER_CACHE["data"] = tickers
             _TICKER_CACHE["timestamp"] = now
             return tickers
     except Exception as e:
-        print(f"[Error fetching raw tickers]: {e}")
+        pass
 
-    # Fallback to cache if available
     return _TICKER_CACHE["data"]
 
 

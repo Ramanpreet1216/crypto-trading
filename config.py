@@ -9,8 +9,8 @@ except ImportError:
 # BOT CONFIGURATION
 # ==============================================================================
 
-# SET TO False FOR LIVE TRADING
-DRY_RUN = False
+# SET TO True FOR PAPER/SIMULATED TRADING (SAFETY HALT)
+DRY_RUN = True
 
 # Trading pair: 'BTCINR', 'ETHINR', 'SOLINR', 'USDTINR'
 # On CoinDCX candle API: 'I-BTC_INR', 'I-ETH_INR', 'I-SOL_INR'

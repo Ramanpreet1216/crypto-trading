@@ -47,44 +47,30 @@ def calculate_futures_trade_qty(coin: str, current_price: float, target_margin_i
 # Shared Bot State with Active Live Trade & Predictive Forecasts
 now_str = datetime.now().strftime("%H:%M:%S")
 bot_state = {
-    "is_running": True,
-    "paper_balance": 960.0,
-    "active_position": {
-        "symbol": "MOVR",
-        "pair": "B-MOVR_USDT",
-        "buy_price": 1.7455,
-        "quantity": 4.83,
-        "invested": 172.49,
-        "leverage": 5,
-        "target": 1.8419,
-        "stop_loss": 1.6920,
-        "probability": 95,
-        "time": now_str
-    },
-    "selected_coin": "MOVR",
-    "selected_pair": "B-MOVR_USDT",
-    "trade_history": [
-        {
-            "type": "BUY",
-            "coin": "MOVR",
-            "price": 1.7455,
-            "amount": 172.49,
-            "note": "1st Bid: 95% Ultra Confluence Setup. Target: $1.8419 (+5.5%), SL: $1.6920 (-3.1%)",
-            "time": now_str
-        }
-    ],
-    "last_signal": "LIVE FUTURES LONG (1st BID PLACED)",
-    "last_reason": "Live Bid executed for 4.83 MOVR @ $1.7455 (5x Lev). Target: $1.8419, Stop-Loss: $1.6920",
+    "is_running": False,  # HALTED BY DEFAULT FOR SAFETY
+    "paper_balance": 1500.0,
+    "active_position": None,  # CLEAN: NO OPEN POSITION
+    "selected_coin": "BTC",
+    "selected_pair": "B-BTC_USDT",
+    "trade_history": [],
+    "last_signal": "BOT PAUSED (SAFE HALT)",
+    "last_reason": "Live trading halted. No automatic orders will be placed.",
     "latest_prediction": {},
 }
 
 # Bot background worker thread: 24/7 Autonomous Breakout Hunting & Execution Engine
 def bot_worker():
     client = CoinDCXClient()
-    scan_tick = 0
+    cooldown_until = 0
+    recent_coins = {} # coin -> timestamp
+
     while True:
         if bot_state["is_running"]:
             try:
+                now_ts = time.time()
+                # Clean expired coin cooldowns
+                recent_coins = {c: t for c, t in recent_coins.items() if t > now_ts}
+
                 profile = config.RISK_PROFILES.get(config.CURRENT_RISK_MODE, config.RISK_PROFILES["BALANCED"])
                 min_conf = profile.get("min_confidence", 85)
                 lev = profile.get("leverage", 7)
@@ -94,10 +80,20 @@ def bot_worker():
                 # STATE A: NO OPEN POSITION -> AUTONOMOUS 739-COIN HUNTING
                 # ==============================================================
                 if bot_state["active_position"] is None:
-                    # Every loop iteration, scan top setups matching current risk mode
+                    if now_ts < cooldown_until:
+                        time_left = int(cooldown_until - now_ts)
+                        bot_state["last_signal"] = "SAFETY COOLDOWN"
+                        bot_state["last_reason"] = f"Safety buffer active ({time_left}s). Preventing rapid re-entry."
+                        time.sleep(5)
+                        continue
+
+                    # Scan top setups matching current risk mode
                     signals = scanner.scan_all_crypto_signals(min_confidence=min_conf, direction="UP", limit=5)
-                    if signals and len(signals) > 0:
-                        top = signals[0]
+                    # Filter out any recently traded coin to prevent loop re-entry
+                    valid_signals = [s for s in signals if recent_coins.get(s["coin"], 0) < now_ts] if signals else []
+
+                    if valid_signals and len(valid_signals) > 0:
+                        top = valid_signals[0]
                         coin = top["coin"]
                         pair = f"B-{coin}_USDT"
                         current_price = top["current_price"]
@@ -109,7 +105,7 @@ def bot_worker():
                         bot_state["selected_coin"] = coin
                         bot_state["selected_pair"] = pair
 
-                        # Execute real order on CoinDCX if live trading is enabled
+                        # Execute real order on CoinDCX ONLY if live mode is explicitly enabled
                         if not config.DRY_RUN:
                             try:
                                 live_order = client.place_futures_order("buy", pair=pair, quantity=qty, leverage=lev)
@@ -205,6 +201,8 @@ def bot_worker():
                                 "reason": exit_trigger,
                                 "time": datetime.now().strftime("%H:%M:%S")
                             })
+                            recent_coins[pos["symbol"]] = time.time() + 3600  # 1 hour cooldown on this coin
+                            cooldown_until = time.time() + 300  # 5 min cooldown before scanning next coin
                             bot_state["active_position"] = None
                         else:
                             bot_state["last_reason"] = f"Monitoring {pos['symbol']}: Target ${pos.get('target')}, Live PnL: {pnl_pct:+.1f}% (₹{pnl:+.2f})"
@@ -293,7 +291,7 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
 
         # API: Predictive Forecast & Probability Engine
         if path == "/api/predict":
-            coin = query.get("coin", ["SOON"])[0].upper()
+            coin = query.get("coin", ["BTC"])[0].upper()
             interval = query.get("interval", ["1h"])[0]
             steps = int(query.get("steps", [10])[0])
             pair = f"B-{coin}_USDT"
@@ -334,7 +332,7 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
 
         # API: Detailed Coin Analysis & Prediction
         elif path == "/api/analyze":
-            coin = query.get("coin", ["SOON"])[0]
+            coin = query.get("coin", ["BTC"])[0]
             interval = query.get("interval", ["1h"])[0]
             analysis = scanner.analyze_coin(coin, interval=interval, limit=60)
             self.send_response(200)
@@ -346,7 +344,7 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
 
         # API: Futures Contract Stats (Mark Price, Funding Rate, Contract Name)
         elif path == "/api/futures_stats":
-            coin = query.get("coin", ["SOON"])[0]
+            coin = query.get("coin", ["BTC"])[0]
             client = CoinDCXClient()
             stats = client.get_futures_stats(coin)
             self.send_response(200)
@@ -358,7 +356,7 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
 
         # API: AI Futures Trade & Leverage Advisor (1m, 5m, 15m, 1h, 1d)
         elif path == "/api/advisor":
-            coin = query.get("coin", ["SOON"])[0].upper()
+            coin = query.get("coin", ["BTC"])[0].upper()
             client = CoinDCXClient()
             timeframes = ["1m", "5m", "15m", "1h", "1d"]
             tf_data = {}
@@ -493,7 +491,7 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
 
         # API: Candle Data for Chart (Supports 1m, 5m, 15m, 1h, 1d)
         elif path == "/api/candles":
-            pair = query.get("pair", ["B-SOON_USDT"])[0]
+            pair = query.get("pair", ["B-BTC_USDT"])[0]
             interval = query.get("interval", ["1h"])[0]
             limit = int(query.get("limit", ["60"])[0])
 
@@ -630,7 +628,7 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length).decode("utf-8")
             data = json.loads(body)
-            coin = data.get("coin", "SOON").upper()
+            coin = data.get("coin", "BTC").upper()
             bot_state["selected_coin"] = coin
             bot_state["selected_pair"] = f"B-{coin}_USDT"
 
