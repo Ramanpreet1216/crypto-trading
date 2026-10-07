@@ -1,0 +1,90 @@
+{
+  "balance_inr": 900.02,
+  "current_position": null,
+  "trades": [
+    {
+      "type": "BUY",
+      "time": "2026-09-29 20:08:31",
+      "price": 8425741.7,
+      "quantity": 1.186839136072733e-05,
+      "invested_inr": 100.0,
+      "metrics": {
+        "price": 8425741.7,
+        "ema_fast": 8415144.82675596,
+        "ema_slow": 8414717.638175828,
+        "rsi": 52.31548512478031
+      }
+    },
+    {
+      "type": "SELL",
+      "time": "2026-09-29 20:13:49",
+      "price": 8389040.8,
+      "proceeds_inr": 99.5644193555091,
+      "pnl_inr": -0.43558064449089784,
+      "pnl_pct": -0.43558064449089995,
+      "reason": "Bearish EMA crossover (Fast < Slow, RSI: 42.8)",
+      "metrics": {
+        "price": 8389040.8,
+        "ema_fast": 8414494.678850768,
+        "ema_slow": 8415032.819744617,
+        "rsi": 42.797777636595136
+      }
+    },
+    {
+      "type": "BUY",
+      "time": "2026-09-29 20:16:35",
+      "price": 8428662.1,
+      "quantity": 1.186427914816991e-05,
+      "invested_inr": 100.0,
+      "metrics": {
+        "price": 8428662.1,
+        "ema_fast": 8418935.798045311,
+        "ema_slow": 8418027.438093834,
+        "rsi": 52.58761731430891
+      }
+    },
+    {
+      "type": "SELL",
+      "time": "2026-09-29 20:18:21",
+      "price": 8383540.0,
+      "proceeds_inr": 99.46465880984837,
+      "pnl_inr": -0.5353411901516267,
+      "pnl_pct": -0.5353411901516331,
+      "reason": "Bearish EMA crossover (Fast < Slow, RSI: 42.2)",
+      "metrics": {
+        "price": 8383540.0,
+        "ema_fast": 8413817.62377299,
+        "ema_slow": 8415964.586730298,
+        "rsi": 42.1834703503756
+      }
+    },
+    {
+      "type": "BUY",
+      "time": "2026-09-29 20:27:11",
+      "price": 8424809.4,
+      "quantity": 1.1869704731836426e-05,
+      "invested_inr": 100.0,
+      "metrics": {
+        "price": 8424809.4,
+        "ema_fast": 8414642.302579926,
+        "ema_slow": 8413609.533500435,
+        "rsi": 52.489807075036495
+      }
+    },
+    {
+      "type": "SELL",
+      "time": "2026-09-30 20:16:17",
+      "price": 83546.4,
+      "proceeds_inr": 0.9916710994078987,
+      "pnl_inr": -99.0083289005921,
+      "pnl_pct": -99.0083289005921,
+      "reason": "Stop Loss triggered! Loss: -99.01%",
+      "metrics": {
+        "price": 83546.4,
+        "ema_fast": 83564.55907822623,
+        "ema_slow": 83643.75331846207,
+        "rsi": 41.075084863893636
+      }
+    }
+  ]
+}

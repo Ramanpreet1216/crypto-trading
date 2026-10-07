@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: coindcx-autonomous-trading-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
+    plan: free
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.8
+      - key: COINDCX_API_KEY
+        sync: false
+      - key: COINDCX_API_SECRET
+        sync: false
