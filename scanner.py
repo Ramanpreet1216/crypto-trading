@@ -147,12 +147,26 @@ def get_top_gainers(limit: int = 8):
     } for c in all_coins]
 
 
+_RADAR_CACHE = {
+    "data": None,
+    "timestamp": 0
+}
+
+_SIGNALS_CACHE = {}
+_ANALYZE_CACHE = {}
+
+
 def get_market_radar(limit: int = 10):
-    """Fetches top Bullish (gainers) and top Bearish (losers) Perpetual Futures on CoinDCX."""
+    """Fetches top Bullish (gainers) and top Bearish (losers) Perpetual Futures on CoinDCX with 15s cache."""
+    global _RADAR_CACHE
+    now = time.time()
+    if _RADAR_CACHE["data"] and (now - _RADAR_CACHE["timestamp"]) < 15.0:
+        return _RADAR_CACHE["data"]
+
     gainers = get_all_cryptos(sort_by="gainers", limit=limit)
     losers = get_all_cryptos(sort_by="losers", limit=limit)
 
-    return {
+    res = {
         "bullish": [{
             "coin": c["coin"],
             "market": c["symbol"],
@@ -168,15 +182,22 @@ def get_market_radar(limit: int = 10):
             "change": c["change_24h"]
         } for c in losers]
     }
+    _RADAR_CACHE["data"] = res
+    _RADAR_CACHE["timestamp"] = now
+    return res
 
 
 def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", limit: int = 35) -> List[Dict[str, Any]]:
     """
-    High-Performance Multi-Crypto Quantitative Scanner:
-    1. Selects the highest-momentum, most volatile, and most liquid coins across all 700+ cryptos.
-    2. Runs multi-indicator predictive analysis (EMA 9/21/50, RSI extremes, Bollinger, Slope, Volume) in parallel.
-    3. Detects Ultra-High Confidence '100% Setups' (90%-98% edge) for both GO UP and GO DOWN directions.
+    High-Performance Multi-Crypto Quantitative Scanner with 30s in-memory caching.
     """
+    global _SIGNALS_CACHE
+    now = time.time()
+    cache_key = (min_confidence, direction, limit)
+    cached = _SIGNALS_CACHE.get(cache_key)
+    if cached and (now - cached["timestamp"]) < 30.0:
+        return cached["data"]
+
     from coindcx_client import CoinDCXClient
     import predictor
 
@@ -188,7 +209,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     if not usdt_pairs:
         return []
 
-    # Gather top candidates: 12 top gainers, 12 top losers, 12 highest volume, 6 volatile mid-caps
+    # Gather top candidates: 8 top gainers, 8 top losers, 8 highest volume
     usdt_pairs_sorted_gain = sorted(usdt_pairs, key=lambda x: float(x.get("priceChangePercent", 0)), reverse=True)
     usdt_pairs_sorted_vol = sorted(usdt_pairs, key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)
     usdt_pairs_sorted_loss = sorted(usdt_pairs, key=lambda x: float(x.get("priceChangePercent", 0)))
@@ -196,7 +217,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     candidate_symbols = []
     seen = set()
 
-    for pool in [usdt_pairs_sorted_gain[:15], usdt_pairs_sorted_loss[:15], usdt_pairs_sorted_vol[:15]]:
+    for pool in [usdt_pairs_sorted_gain[:8], usdt_pairs_sorted_loss[:8], usdt_pairs_sorted_vol[:8]]:
         for item in pool:
             sym = item.get("symbol", "").replace("USDT", "")
             if sym.isascii() and sym.isalnum() and sym not in seen:
@@ -208,8 +229,8 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     def _eval_coin(coin_tuple):
         coin, chg_24h, vol_usdt = coin_tuple
         try:
-            candles = client.get_futures_candles(coin, interval="1h", limit=35)
-            if not candles or len(candles) < 20:
+            candles = client.get_futures_candles(coin, interval="1h", limit=30)
+            if not candles or len(candles) < 15:
                 return None
             df = pd.DataFrame(candles[::-1])
             pred = predictor.predict_next_move(df, forecast_steps=10)
@@ -244,16 +265,17 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
                 "summary": pred.get("summary", ""),
                 "timestamp": int(time.time() * 1000)
             }
-        except Exception as e:
+        except Exception:
             return None
 
-    # Parallel evaluation using 12 threads
-    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+    # Lightweight parallel evaluation with 4 workers (cloud friendly)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         scan_results = [r for r in executor.map(_eval_coin, candidate_symbols) if r is not None]
 
-    # Sort primarily by probability descending (98%, 96%, 95% at the top!)
     scan_results.sort(key=lambda x: (x["probability"], abs(x["expected_change_pct"])), reverse=True)
-    return scan_results[:limit]
+    final_res = scan_results[:limit]
+    _SIGNALS_CACHE[cache_key] = {"data": final_res, "timestamp": now}
+    return final_res
 
 
 from coindcx_client import CoinDCXClient
@@ -261,9 +283,15 @@ from coindcx_client import CoinDCXClient
 def analyze_coin(symbol_or_pair: str, interval: str = "1h", limit: int = 60):
     """
     Analyzes true Perpetual Futures chart data, funding rate, mark price, and indicators.
-    Supports 1m, 5m, 15m, 1h, 1d (case-insensitive).
-    Computes EMA(9, 21, 50), RSI(14), Support/Resistance, and provides price prediction.
+    Cached for 8 seconds to prevent redundant processing.
     """
+    global _ANALYZE_CACHE
+    now = time.time()
+    cache_key = (symbol_or_pair.upper(), str(interval).lower(), int(limit))
+    cached = _ANALYZE_CACHE.get(cache_key)
+    if cached and (now - cached["timestamp"]) < 8.0:
+        return cached["data"]
+
     clean_sym = symbol_or_pair.upper().replace("-", "").replace("_", "").replace("USDT", "").replace("B", "", 1) if symbol_or_pair.startswith("B-") else symbol_or_pair.upper().replace("-", "").replace("_", "").replace("USDT", "")
     pair_name = f"B-{clean_sym}_USDT"
 
@@ -318,7 +346,7 @@ def analyze_coin(symbol_or_pair: str, interval: str = "1h", limit: int = 60):
             trend = "CONSOLIDATION / NEUTRAL RANGE"
             suggestion = "Ranging sideways. Wait for breakout above resistance or bounce off support."
 
-        return {
+        result = {
             "pair": pair_name,
             "coin": clean_sym,
             "contract": futures_stats.get("contract", f"{clean_sym}USDT.P"),
@@ -338,6 +366,8 @@ def analyze_coin(symbol_or_pair: str, interval: str = "1h", limit: int = 60):
             "trend": trend,
             "suggestion": suggestion,
         }
+        _ANALYZE_CACHE[cache_key] = {"data": result, "timestamp": now}
+        return result
     except Exception as e:
         print(f"[Error analyzing {clean_sym}]: {e}")
         return None

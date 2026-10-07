@@ -274,6 +274,16 @@ alert_thread = threading.Thread(target=alert_monitor_worker, daemon=True)
 alert_thread.start()
 
 
+_STATUS_CACHE = {"timestamp": 0}
+_CANDLES_CACHE = {}
+_ADVISOR_CACHE = {}
+
+
+class ThreadedHTTPServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_DIR, **kwargs)
@@ -489,14 +499,21 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(response_data).encode("utf-8"))
             return
 
-        # API: Candle Data for Chart (Supports 1m, 5m, 15m, 1h, 1d)
+        # API: Candle Data for Chart (Supports 1m, 5m, 15m, 1h, 1d) with 5s cache
         elif path == "/api/candles":
             pair = query.get("pair", ["B-BTC_USDT"])[0]
             interval = query.get("interval", ["1h"])[0]
             limit = int(query.get("limit", ["60"])[0])
 
-            client = CoinDCXClient()
-            candles = client.get_raw_candles(pair=pair, interval=interval, limit=limit)
+            now_c = time.time()
+            c_key = (pair, interval, limit)
+            cached_c = _CANDLES_CACHE.get(c_key)
+            if cached_c and (now_c - cached_c["timestamp"]) < 5.0:
+                candles = cached_c["data"]
+            else:
+                client = CoinDCXClient()
+                candles = client.get_raw_candles(pair=pair, interval=interval, limit=limit)
+                _CANDLES_CACHE[c_key] = {"data": candles, "timestamp": now_c}
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -505,30 +522,32 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(candles).encode("utf-8"))
             return
 
-        # API: Bot Status & Balances
+        # API: Bot Status & Balances with 5s cache
         elif path == "/api/status":
-            try:
-                client = CoinDCXClient()
-                real_balances = client.get_account_balances()
-                f_bal = real_balances.get("FUTURES_INR", 0.0)
-                s_bal = real_balances.get("SPOT_INR", 0.0)
-                t_bal = real_balances.get("TOTAL_INR", 0.0)
-                inr_real = real_balances.get("INR", 0.0)
+            now_s = time.time()
+            if (now_s - _STATUS_CACHE.get("timestamp", 0)) > 5.0:
+                try:
+                    client = CoinDCXClient()
+                    real_balances = client.get_account_balances()
+                    f_bal = real_balances.get("FUTURES_INR", 0.0)
+                    s_bal = real_balances.get("SPOT_INR", 0.0)
+                    t_bal = real_balances.get("TOTAL_INR", 0.0)
+                    inr_real = real_balances.get("INR", 0.0)
 
-                bot_state["futures_balance"] = round(f_bal, 2)
-                bot_state["spot_balance"] = round(s_bal, 2)
-                bot_state["total_balance"] = round(t_bal, 2)
+                    bot_state["futures_balance"] = round(f_bal, 2)
+                    bot_state["spot_balance"] = round(s_bal, 2)
+                    bot_state["total_balance"] = round(t_bal, 2)
 
-                if inr_real is not None and not real_balances.get("PAPER_MODE"):
-                    bot_state["live_balance"] = round(f_bal if f_bal > 0 else inr_real, 2)
-                    bot_state["real_connected"] = True
-                else:
+                    if inr_real is not None and not real_balances.get("PAPER_MODE"):
+                        bot_state["live_balance"] = round(f_bal if f_bal > 0 else inr_real, 2)
+                        bot_state["real_connected"] = True
+                    else:
+                        bot_state["live_balance"] = bot_state["paper_balance"]
+                        bot_state["real_connected"] = False
+                    _STATUS_CACHE["timestamp"] = now_s
+                except Exception as e:
                     bot_state["live_balance"] = bot_state["paper_balance"]
                     bot_state["real_connected"] = False
-            except Exception as e:
-                print(f"[Status Balance Err]: {e}")
-                bot_state["live_balance"] = bot_state["paper_balance"]
-                bot_state["real_connected"] = False
 
             bot_state["dry_run"] = config.DRY_RUN
             bot_state["risk_mode"] = config.CURRENT_RISK_MODE
@@ -691,9 +710,8 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
 
 def start_server():
     os.makedirs(WEB_DIR, exist_ok=True)
-    server_address = ("", PORT)
-    with socketserver.ThreadingTCPServer(server_address, TradingApiHandler) as httpd:
-        httpd.allow_reuse_address = True
+    server_address = ("0.0.0.0", PORT)
+    with ThreadedHTTPServer(server_address, TradingApiHandler) as httpd:
         print(f"\n=======================================================")
         print(f"  COINDCX VISUAL TRADING DASHBOARD RUNNING")
         print(f"  Access UI at: http://localhost:{PORT}")

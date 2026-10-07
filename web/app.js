@@ -164,31 +164,26 @@ document.addEventListener("DOMContentLoaded", () => {
   updateLiquidationEstimate();
   pollAlerts();
 
-  // Auto-refresh main chart and futures statistics every 6 seconds
+  // Auto-refresh main chart and futures statistics every 10 seconds
   setInterval(() => {
     loadCoinData(currentCoin, true);
     syncBotStatus();
-  }, 6000);
+  }, 10000);
 
-  // Periodic alert polling every 7 seconds
+  // Periodic alert polling every 12 seconds
   setInterval(() => {
     pollAlerts();
-  }, 7000);
+  }, 12000);
 
-  // Periodic scanner auto-refresh every 28 seconds
+  // Periodic scanner auto-refresh every 45 seconds
   setInterval(() => {
     runMarketScan(false);
-  }, 28000);
+  }, 45000);
 
-  // Periodic market radar refresh every 15 seconds
+  // Periodic market radar refresh every 40 seconds
   setInterval(() => {
     fetchMarketRadar();
-  }, 15000);
-
-  // Periodic all cryptos background update every 20 seconds
-  setInterval(() => {
-    loadAllCryptosData(true);
-  }, 20000);
+  }, 40000);
 
   // Close search dropdown when clicking outside
   document.addEventListener("click", (e) => {
