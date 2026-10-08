@@ -48,15 +48,85 @@ def calculate_futures_trade_qty(coin: str, current_price: float, target_margin_i
     return qty, round(actual_margin, 2)
 
 
+TRADES_FILE = os.path.join(os.path.dirname(__file__), "paper_trades.json")
+
+def load_paper_trades():
+    """Load persistent paper trades and performance stats from disk."""
+    if os.path.exists(TRADES_FILE):
+        try:
+            with open(TRADES_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data
+        except Exception as e:
+            print(f"[Error loading {TRADES_FILE}]: {e}")
+    return {"trades": [], "summary": {}}
+
+def _extract_pnl(t):
+    val = t.get("pnl")
+    if val is not None:
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            pass
+    val_inr = t.get("pnl_inr")
+    if val_inr is not None:
+        try:
+            return float(val_inr)
+        except (ValueError, TypeError):
+            pass
+    return 0.0
+
+def calculate_trade_performance(trades):
+    """Calculate Net PnL, Win Rate %, Total Wins, Total Losses, and Volume."""
+    completed = [t for t in trades if t.get("type") == "SELL"]
+    wins = [t for t in completed if _extract_pnl(t) > 0]
+    losses = [t for t in completed if _extract_pnl(t) < 0]
+    total_pnl = sum(_extract_pnl(t) for t in completed)
+    total_volume = sum(float(t.get("amount") if t.get("amount") is not None else t.get("invested_inr", 0) or 0) for t in trades)
+    win_rate = round((len(wins) / len(completed)) * 100.0, 1) if completed else 0.0
+
+    return {
+        "total_trades": len(trades),
+        "completed_trades": len(completed),
+        "wins": len(wins),
+        "losses": len(losses),
+        "win_rate_pct": win_rate,
+        "total_pnl_inr": round(total_pnl, 2),
+        "total_volume_inr": round(total_volume, 2),
+        "is_profitable": total_pnl > 0
+    }
+
+def record_paper_trade(trade_entry):
+    """Append a trade to disk and update performance metrics."""
+    try:
+        data = load_paper_trades()
+        trades = data.get("trades", [])
+        trades.insert(0, trade_entry)
+        summary = calculate_trade_performance(trades)
+        payload = {
+            "updated_at": datetime.now().isoformat(),
+            "summary": summary,
+            "trades": trades[:500]
+        }
+        with open(TRADES_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        return summary
+    except Exception as e:
+        print(f"[Error saving {TRADES_FILE}]: {e}")
+        return {}
+
+
 # Shared Bot State with Active Live Trade & Predictive Forecasts
 now_str = datetime.now().strftime("%H:%M:%S")
+initial_paper_data = load_paper_trades()
 bot_state = {
     "is_running": False,  # HALTED BY DEFAULT FOR SAFETY
     "paper_balance": 1500.0,
     "active_position": None,  # CLEAN: NO OPEN POSITION
     "selected_coin": "BTC",
     "selected_pair": "B-BTC_USDT",
-    "trade_history": [],
+    "trade_history": initial_paper_data.get("trades", []),
+    "performance_summary": calculate_trade_performance(initial_paper_data.get("trades", [])),
     "last_signal": "BOT PAUSED (SAFE HALT)",
     "last_reason": "Live trading halted. No automatic orders will be placed.",
     "latest_prediction": {},
@@ -100,12 +170,22 @@ def bot_worker():
                         top = valid_signals[0]
                         coin = top["coin"]
                         pair = f"B-{coin}_USDT"
-                        current_price = top["current_price"]
-                        target_price = top["target_price"]
-                        stop_loss = top["stop_loss"]
+
+                        # FIX: Fetch real live mark/ticker price at execution time to avoid 1h candle lag
+                        live_stats = client.get_futures_stats(coin)
+                        live_price = float(live_stats.get("mark_price", 0) or live_stats.get("last_price", 0) or 0)
+                        if live_price <= 0:
+                            live_price = float(top["current_price"])
+
+                        # Re-calculate SL & TP based on exact live entry price
+                        tp_pct = profile.get("target_profit_pct", 4.5)
+                        sl_pct = profile.get("stop_loss_pct", 2.0)
+                        precision = 6 if live_price < 1.0 else 2
+                        target_price = round(live_price * (1.0 + (tp_pct / 100.0)), precision)
+                        stop_loss = round(live_price * (1.0 - (sl_pct / 100.0)), precision)
                         prob = top["probability"]
 
-                        qty, spend = calculate_futures_trade_qty(coin, current_price, target_margin_inr=invest_target, leverage=lev)
+                        qty, spend = calculate_futures_trade_qty(coin, live_price, target_margin_inr=invest_target, leverage=lev)
                         bot_state["selected_coin"] = coin
                         bot_state["selected_pair"] = pair
 
@@ -117,30 +197,35 @@ def bot_worker():
                             except Exception as live_err:
                                 print(f"[LIVE AUTONOMOUS ORDER ERROR]: {live_err}")
 
+                        entry_ts = time.time()
                         bot_state["active_position"] = {
                             "symbol": coin,
                             "pair": pair,
-                            "buy_price": current_price,
+                            "buy_price": live_price,
                             "quantity": qty,
                             "invested": spend,
                             "leverage": lev,
                             "target": target_price,
                             "stop_loss": stop_loss,
                             "trailing_stop": stop_loss,
-                            "peak_price": current_price,
+                            "peak_price": live_price,
                             "probability": prob,
+                            "entry_time": entry_ts,
                             "time": datetime.now().strftime("%H:%M:%S")
                         }
                         bot_state["last_signal"] = f"AUTONOMOUS BUY [{coin}]"
                         bot_state["last_reason"] = f"Triggered {config.CURRENT_RISK_MODE} ({prob}%): Target ${target_price}, SL ${stop_loss}"
-                        bot_state["trade_history"].insert(0, {
+                        trade_rec = {
                             "type": "BUY",
                             "coin": coin,
-                            "price": current_price,
+                            "price": live_price,
                             "amount": spend,
                             "note": f"{config.CURRENT_RISK_MODE} ({prob}%): Target ${target_price}, SL ${stop_loss}",
-                            "time": datetime.now().strftime("%H:%M:%S")
-                        })
+                            "time": datetime.now().strftime("%H:%M:%S"),
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        }
+                        bot_state["trade_history"].insert(0, trade_rec)
+                        record_paper_trade(trade_rec)
                     else:
                         bot_state["last_signal"] = "SCANNING 739 COINS"
                         bot_state["last_reason"] = f"Scanning 739 coins 24/7 for {config.CURRENT_RISK_MODE} setups (min {min_conf}% conf)..."
@@ -152,6 +237,13 @@ def bot_worker():
                     pos = bot_state["active_position"]
                     pair = pos["pair"]
                     pos_lev = pos.get("leverage", lev)
+
+                    # 20-second grace period after entry before evaluating stop-loss
+                    pos_age = time.time() - pos.get("entry_time", 0)
+                    if pos_age < 20:
+                        bot_state["last_reason"] = f"Holding {pos['symbol']}: Initializing position buffer ({int(20 - pos_age)}s)..."
+                        time.sleep(5)
+                        continue
 
                     df = client.get_candles(pair=pair, interval=config.TIMEFRAME, limit=35)
                     if df is not None and len(df) > 0:
@@ -195,7 +287,7 @@ def bot_worker():
 
                             bot_state["last_signal"] = "AUTONOMOUS EXIT"
                             bot_state["last_reason"] = exit_trigger
-                            bot_state["trade_history"].insert(0, {
+                            exit_rec = {
                                 "type": "SELL",
                                 "coin": pos["symbol"],
                                 "price": current_price,
@@ -203,8 +295,11 @@ def bot_worker():
                                 "pnl": round(pnl, 2),
                                 "pnl_pct": round(pnl_pct, 2),
                                 "reason": exit_trigger,
-                                "time": datetime.now().strftime("%H:%M:%S")
-                            })
+                                "time": datetime.now().strftime("%H:%M:%S"),
+                                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            }
+                            bot_state["trade_history"].insert(0, exit_rec)
+                            record_paper_trade(exit_rec)
                             recent_coins[pos["symbol"]] = time.time() + 3600  # 1 hour cooldown on this coin
                             cooldown_until = time.time() + 300  # 5 min cooldown before scanning next coin
                             bot_state["active_position"] = None
@@ -607,6 +702,8 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
 
         # API: Bot Status & Balances (Instant Non-Blocking 0.1ms Response)
         elif path == "/api/status":
+            p_data = load_paper_trades()
+            bot_state["performance_summary"] = calculate_trade_performance(p_data.get("trades", []))
             bot_state["dry_run"] = config.DRY_RUN
             bot_state["risk_mode"] = config.CURRENT_RISK_MODE
             bot_state["risk_profile"] = config.RISK_PROFILES.get(config.CURRENT_RISK_MODE, {})
@@ -615,6 +712,20 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(json.dumps(bot_state).encode("utf-8"))
+            return
+
+        # API: Paper Trade History & Complete Analytics
+        elif path == "/api/paper_trades":
+            p_data = load_paper_trades()
+            summary = calculate_trade_performance(p_data.get("trades", []))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "summary": summary,
+                "trades": p_data.get("trades", [])
+            }).encode("utf-8"))
             return
 
         # API: Risk Modes List
@@ -821,14 +932,17 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
             bot_state["selected_pair"] = pair
             bot_state["last_signal"] = f"MANUAL {side} [{coin}]"
             bot_state["last_reason"] = f"User executed {side} ({lev}x): Target ${target_p}, SL ${stop_p}"
-            bot_state["trade_history"].insert(0, {
+            trade_rec = {
                 "type": "BUY" if side == "LONG" else "SHORT",
                 "coin": coin,
                 "price": curr_price,
                 "amount": actual_spend,
                 "note": f"Manual {side} {lev}x: Target ${target_p}, SL ${stop_p}",
-                "time": datetime.now().strftime("%H:%M:%S")
-            })
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            bot_state["trade_history"].insert(0, trade_rec)
+            record_paper_trade(trade_rec)
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -875,7 +989,7 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
 
             bot_state["last_signal"] = f"MANUAL EXIT [{pos['symbol']}]"
             bot_state["last_reason"] = f"Closed {pos['symbol']} at ${curr_price:.4f} (PnL: {pnl_pct:+.1f}%, INR {pnl_inr:+.2f})"
-            bot_state["trade_history"].insert(0, {
+            close_rec = {
                 "type": "SELL",
                 "coin": pos["symbol"],
                 "price": curr_price,
@@ -883,8 +997,11 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
                 "pnl": pnl_inr,
                 "pnl_pct": round(pnl_pct, 2),
                 "reason": "Manual Close Button",
-                "time": datetime.now().strftime("%H:%M:%S")
-            })
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            bot_state["trade_history"].insert(0, close_rec)
+            record_paper_trade(close_rec)
             bot_state["active_position"] = None
 
             self.send_response(200)
@@ -898,6 +1015,30 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
                 "pnl_pct": round(pnl_pct, 2)
             }).encode("utf-8"))
             return
+
+        elif path == "/api/paper_trades/clear":
+            try:
+                payload = {
+                    "updated_at": datetime.now().isoformat(),
+                    "summary": {
+                        "total_trades": 0, "completed_trades": 0, "wins": 0,
+                        "losses": 0, "win_rate_pct": 0, "total_pnl_inr": 0,
+                        "total_volume_inr": 0, "is_profitable": False
+                    },
+                    "trades": []
+                }
+                with open(TRADES_FILE, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2)
+                bot_state["trade_history"] = []
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "success", "message": "Paper history cleared"}).encode("utf-8"))
+                return
+            except Exception as e:
+                self.send_error(500, str(e))
+                return
 
         self.send_error(404, "Endpoint not found")
 

@@ -1012,24 +1012,238 @@ async function syncBotStatus() {
       elPosDetails.textContent = `Model Status: [${data.last_signal}] - ${data.last_reason}`;
     }
 
-    if (data.trade_history && data.trade_history.length > 0) {
-      elTradeLogList.innerHTML = data.trade_history.slice(0, 6).map(t => `
-        <div class="trade-log-item">
-          <div>
-            <span class="trade-log-type ${t.type}">${t.type}</span>
-            <span style="margin-left: 6px; font-weight: 600;">${t.coin}</span>
-          </div>
-          <div>${formatPrice(t.price)}</div>
-          <div style="color: ${t.pnl >= 0 ? '#10b981' : '#ef4444'}">
-            ${t.pnl !== undefined ? `INR ${t.pnl >= 0 ? '+' : ''}${t.pnl}` : `INR ${t.amount}`}
-          </div>
-          <div style="color: #64748b; font-size: 0.7rem;">${t.time}</div>
-        </div>
-      `).join("");
+    if (data.performance_summary) {
+      updateTradePerformanceHUD(data.performance_summary);
+    }
+
+    if (data.trade_history) {
+      const historyHash = JSON.stringify(data.trade_history.map(t => t.time + (t.pnl || t.amount)));
+      if (historyHash !== lastRenderedTradesHash) {
+        lastRenderedTradesHash = historyHash;
+        allTradeHistory = data.trade_history;
+        renderTradeLogList();
+      }
     }
   } catch (e) {
     console.error("Status sync error:", e);
   }
+}
+
+// Global Paper Trade State
+let allTradeHistory = [];
+let activeTradeFilter = "ALL";
+let lastRenderedTradesHash = "";
+
+function updateTradePerformanceHUD(summary) {
+  if (!summary) return;
+  const elNetPnl = document.getElementById("hud-net-pnl");
+  const elWinRate = document.getElementById("hud-win-rate");
+  const elWinLoss = document.getElementById("hud-win-loss");
+  const elTotalTrades = document.getElementById("hud-total-trades");
+
+  const netPnl = Number(summary.total_pnl_inr || 0);
+  const winRate = Number(summary.win_rate_pct || 0);
+  const wins = Number(summary.wins || 0);
+  const losses = Number(summary.losses || 0);
+  const total = Number(summary.total_trades || 0);
+
+  if (elNetPnl) {
+    elNetPnl.textContent = `INR ${netPnl >= 0 ? '+' : ''}${netPnl.toFixed(2)}`;
+    elNetPnl.style.color = netPnl >= 0 ? "#10b981" : "#ef4444";
+    const cell = elNetPnl.closest(".trade-hud-cell");
+    if (cell) cell.style.borderLeftColor = netPnl >= 0 ? "#10b981" : "#ef4444";
+  }
+
+  if (elWinRate) {
+    elWinRate.textContent = `${winRate.toFixed(1)}%`;
+    elWinRate.style.color = winRate >= 50 ? "#34d399" : (winRate > 0 ? "#f59e0b" : "#94a3b8");
+  }
+
+  if (elWinLoss) {
+    elWinLoss.textContent = `${wins}W / ${losses}L`;
+  }
+
+  if (elTotalTrades) {
+    elTotalTrades.textContent = `${total} trades`;
+  }
+}
+
+function filterTradeHistoryTab(tab) {
+  activeTradeFilter = tab;
+  ["ALL", "WINS", "LOSSES"].forEach(t => {
+    const btn = document.getElementById(`tab-trade-${t.toLowerCase()}`);
+    if (btn) btn.classList.toggle("active", t === tab);
+  });
+  renderTradeLogList();
+}
+
+function renderTradeLogList() {
+  if (!elTradeLogList) return;
+
+  // Protect active user mouse highlight from being wiped by polling
+  const sel = window.getSelection();
+  if (sel && sel.toString().length > 0 && elTradeLogList.contains(sel.anchorNode)) {
+    return;
+  }
+
+  let filtered = allTradeHistory;
+  if (activeTradeFilter === "WINS") {
+    filtered = allTradeHistory.filter(t => t.type === "SELL" && Number(t.pnl || t.pnl_inr || 0) > 0);
+  } else if (activeTradeFilter === "LOSSES") {
+    filtered = allTradeHistory.filter(t => t.type === "SELL" && Number(t.pnl || t.pnl_inr || 0) < 0);
+  }
+
+  if (!filtered || filtered.length === 0) {
+    elTradeLogList.innerHTML = `<div class="empty-trades">No ${activeTradeFilter !== 'ALL' ? activeTradeFilter.toLowerCase() : 'executions'} recorded yet.</div>`;
+    return;
+  }
+
+  elTradeLogList.innerHTML = filtered.map(t => {
+    const isSell = t.type === "SELL";
+    const pnlVal = t.pnl !== undefined ? Number(t.pnl) : (t.pnl_inr !== undefined ? Number(t.pnl_inr) : null);
+    const pnlPct = t.pnl_pct !== undefined ? Number(t.pnl_pct) : null;
+    const isWin = pnlVal !== null && pnlVal > 0;
+    const isLoss = pnlVal !== null && pnlVal < 0;
+
+    let pnlColor = "#94a3b8";
+    if (isWin) pnlColor = "#10b981";
+    if (isLoss) pnlColor = "#ef4444";
+
+    return `
+      <div class="trade-log-item" title="${t.reason || t.note || ''}">
+        <div>
+          <span class="trade-log-type ${t.type}">${t.type}</span>
+          <span style="margin-left: 6px; font-weight: 600;">${t.coin}</span>
+        </div>
+        <div style="font-family: var(--font-mono);">${formatPrice(t.price)}</div>
+        <div style="color: ${pnlColor}; font-weight: 700; font-family: var(--font-mono);">
+          ${pnlVal !== null ? `INR ${pnlVal >= 0 ? '+' : ''}${pnlVal.toFixed(2)}${pnlPct !== null ? ` (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)` : ''}` : `INR ${Number(t.amount || 0).toFixed(2)}`}
+        </div>
+        <div style="color: #64748b; font-size: 0.7rem;">${t.time || ''}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+function copyTradeHistoryToClipboard() {
+  if (!allTradeHistory || allTradeHistory.length === 0) {
+    showToastNotification("⚠️ No trades to copy.");
+    return;
+  }
+
+  const pnlEl = document.getElementById("hud-net-pnl");
+  const pnlText = pnlEl ? pnlEl.textContent : "0";
+  const wrEl = document.getElementById("hud-win-rate");
+  const wrText = wrEl ? wrEl.textContent : "0%";
+  const wlEl = document.getElementById("hud-win-loss");
+  const wlText = wlEl ? wlEl.textContent : "0W / 0L";
+
+  let out = `=== COINDCX BOT EXECUTIONS & PERFORMANCE AUDIT ===\n`;
+  out += `Status: ${pnlText} Net PnL | Win Rate: ${wrText} | ${wlText}\n`;
+  out += `Total Trades Recorded: ${allTradeHistory.length}\n`;
+  out += `------------------------------------------------------------\n`;
+  out += `TIME     | TYPE  | COIN   | PRICE       | PnL / AMOUNT (INR) | DETAILS\n`;
+  out += `------------------------------------------------------------\n`;
+
+  allTradeHistory.forEach(t => {
+    const time = (t.time || "").padEnd(8);
+    const type = (t.type || "").padEnd(5);
+    const coin = (t.coin || "").padEnd(6);
+    const price = (`$${t.price}`).padEnd(11);
+    const pnl = t.pnl !== undefined ? `PnL: ${t.pnl >= 0 ? '+' : ''}${t.pnl}` : `Amt: ${t.amount}`;
+    const pnlPad = pnl.padEnd(18);
+    const reason = t.reason || t.note || "";
+    out += `${time} | ${type} | ${coin} | ${price} | ${pnlPad} | ${reason}\n`;
+  });
+  out += `------------------------------------------------------------\n`;
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(out).then(() => {
+      showToastNotification("📋 Trade history copied to clipboard!");
+    }).catch(() => {
+      fallbackCopyText(out);
+    });
+  } else {
+    fallbackCopyText(out);
+  }
+}
+
+function fallbackCopyText(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand("copy");
+  document.body.removeChild(ta);
+  showToastNotification("📋 Trade history copied to clipboard!");
+}
+
+function exportTradesToCSV() {
+  if (!allTradeHistory || allTradeHistory.length === 0) {
+    alert("No trade executions recorded yet.");
+    return;
+  }
+
+  let csv = "Timestamp,Time,Type,Coin,Price_USD,Amount_INR,PnL_INR,PnL_Pct,Reason_Note\n";
+  allTradeHistory.forEach(t => {
+    const ts = (t.timestamp || "").replace(/"/g, '""');
+    const time = (t.time || "").replace(/"/g, '""');
+    const type = (t.type || "");
+    const coin = (t.coin || "");
+    const price = Number(t.price || 0);
+    const amt = Number(t.amount || 0);
+    const pnl = t.pnl !== undefined ? Number(t.pnl) : "";
+    const pnlPct = t.pnl_pct !== undefined ? Number(t.pnl_pct) : "";
+    const reason = (t.reason || t.note || "").replace(/"/g, '""');
+
+    csv += `"${ts}","${time}","${type}","${coin}",${price},${amt},${pnl},${pnlPct},"${reason}"\n`;
+  });
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `coindcx_paper_trades_${new Date().toISOString().slice(0, 10)}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+async function clearPaperTradeHistory() {
+  if (!confirm("Are you sure you want to reset and clear all paper trade history?")) return;
+  try {
+    const res = await fetch("/api/paper_trades/clear", { method: "POST" });
+    if (res.ok) {
+      allTradeHistory = [];
+      lastRenderedTradesHash = "";
+      updateTradePerformanceHUD({ total_pnl_inr: 0, win_rate_pct: 0, wins: 0, losses: 0, total_trades: 0 });
+      renderTradeLogList();
+      showToastNotification("🗑️ Paper trade history cleared.");
+    }
+  } catch (e) {
+    console.error("Clear error:", e);
+  }
+}
+
+function showToastNotification(msg) {
+  const container = document.getElementById("toast-container");
+  if (!container) return;
+  const toast = document.createElement("div");
+  toast.className = "alert-toast up";
+  toast.style.background = "rgba(15, 23, 42, 0.95)";
+  toast.style.border = "1px solid #38bdf8";
+  toast.innerHTML = `
+    <div class="toast-header" style="justify-content: space-between;">
+      <span style="font-weight: 700; color: #38bdf8;">NOTIFICATION</span>
+      <button class="toast-close-btn" onclick="this.parentElement.parentElement.remove()">✕</button>
+    </div>
+    <div class="toast-body" style="font-size: 0.8rem; color: #fff; padding: 6px 0;">${msg}</div>
+  `;
+  container.appendChild(toast);
+  setTimeout(() => { if (toast && toast.parentElement) toast.remove(); }, 3200);
 }
 
 
@@ -1205,8 +1419,12 @@ function initDraggablePanels() {
   let draggedEl = null;
 
   container.addEventListener("dragstart", (e) => {
+    const handle = e.target.closest(".drag-handle");
     const panel = e.target.closest(".draggable-panel");
-    if (!panel) return;
+    if (!handle || !panel) {
+      e.preventDefault();
+      return false;
+    }
     draggedEl = panel;
     panel.classList.add("dragging");
     e.dataTransfer.effectAllowed = "move";

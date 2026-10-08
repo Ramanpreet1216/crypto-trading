@@ -756,14 +756,57 @@
           </div>
         </div>
 
-        <!-- 3. Recent Simulated Executions (Separate Draggable Card) -->
-        <div class="panel-card card-glass draggable-panel" id="panel-trades" draggable="true">
+        <!-- 3. Recent Simulated Executions (Separate Draggable Card with Performance HUD & Export) -->
+        <div class="panel-card card-glass draggable-panel" id="panel-trades">
           <div class="panel-title-bar">
             <div style="display: flex; align-items: center; gap: 8px;">
               <span class="drag-handle" title="Drag to reorder panel">⋮⋮</span>
               <h3>RECENT EXECUTIONS LOG</h3>
             </div>
-            <span class="badge-mode">PAPER HISTORY</span>
+            <span class="badge-mode" id="trade-history-badge">PAPER HISTORY</span>
+          </div>
+
+          <!-- BOT PROFIT/LOSS PERFORMANCE HUD -->
+          <div class="trade-hud-container">
+            <div class="trade-hud-grid">
+              <div class="trade-hud-cell" style="border-left: 3px solid #10b981;">
+                <span class="trade-hud-lbl">Net Profit / Loss</span>
+                <span class="trade-hud-val" id="hud-net-pnl" style="color: #10b981;">INR +0.00</span>
+              </div>
+              <div class="trade-hud-cell" style="border-left: 3px solid #38bdf8;">
+                <span class="trade-hud-lbl">Win Rate</span>
+                <span class="trade-hud-val text-cyan" id="hud-win-rate">0.0%</span>
+              </div>
+              <div class="trade-hud-cell">
+                <span class="trade-hud-lbl">Win / Loss Ratio</span>
+                <span class="trade-hud-val" id="hud-win-loss" style="color: #cbd5e1;">0W / 0L</span>
+              </div>
+              <div class="trade-hud-cell">
+                <span class="trade-hud-lbl">Total Executions</span>
+                <span class="trade-hud-val text-amber" id="hud-total-trades">0 trades</span>
+              </div>
+            </div>
+
+            <!-- Toolbar: Filter Tabs & Copy/Export Action Buttons -->
+            <div class="trade-actions-toolbar">
+              <div class="trade-tab-group">
+                <button type="button" class="trade-tab-btn active" id="tab-trade-all" onclick="filterTradeHistoryTab('ALL')">All</button>
+                <button type="button" class="trade-tab-btn" id="tab-trade-wins" onclick="filterTradeHistoryTab('WINS')">Wins</button>
+                <button type="button" class="trade-tab-btn" id="tab-trade-losses" onclick="filterTradeHistoryTab('LOSSES')">Losses</button>
+              </div>
+
+              <div class="trade-btn-tools">
+                <button type="button" class="tool-action-btn" onclick="copyTradeHistoryToClipboard()" title="Copy all trade executions to clipboard">
+                  📋 Copy
+                </button>
+                <button type="button" class="tool-action-btn" onclick="exportTradesToCSV()" title="Download CSV spreadsheet of all trades">
+                  📥 CSV
+                </button>
+                <button type="button" class="tool-action-btn btn-clear" onclick="clearPaperTradeHistory()" title="Reset trade history">
+                  🗑️
+                </button>
+              </div>
+            </div>
           </div>
 
           <div class="trade-log-section" style="margin-top: 0;">
