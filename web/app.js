@@ -156,6 +156,8 @@ document.addEventListener("DOMContentLoaded", () => {
   setupCanvasEvents();
   updateSoundButtonUI();
   updateLiquidationEstimate();
+  initDraggablePanels();
+  updateCustomOrderSummary();
 
   // 1. Immediate: Load core bot status & selected coin chart
   syncBotStatus();
@@ -840,6 +842,7 @@ function selectCoin(coin, scrollToTop = false) {
   }).catch(e => console.error("Error updating selected coin:", e));
 
   loadCoinData(currentCoin);
+  updateCustomOrderSummary();
 
   if (scrollToTop) {
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1043,16 +1046,227 @@ async function toggleBot() {
 }
 
 
-// 19. Manual Simulated Trade
-function simulateTrade(side) {
-  const price = parseFloat(elPrice.textContent.replace("$", "").replace(",", "")) || 0.45;
-  if (side === "BUY") {
-    fetch("/api/bot/toggle", { method: "POST" });
-    alert(`Simulated FUTURES LONG (${currentLeverage}x): Placed order for INR 150 on ${currentCoin} at ${formatPrice(price)}!`);
-  } else {
-    alert(`Simulated FUTURES CLOSE: Closed position on ${currentCoin} at ${formatPrice(price)}!`);
+// ==============================================================================
+// 19. INTERACTIVE CUSTOM FUTURES ORDER TERMINAL & SIZING
+// ==============================================================================
+let customOrderSide = "LONG";
+
+function setCustomOrderSide(side) {
+  customOrderSide = side.toUpperCase();
+  const btnLong = document.getElementById("btn-side-long");
+  const btnShort = document.getElementById("btn-side-short");
+  if (btnLong && btnShort) {
+    btnLong.classList.toggle("active-long", customOrderSide === "LONG");
+    btnShort.classList.toggle("active-short", customOrderSide === "SHORT");
   }
-  syncBotStatus();
+  updateCustomOrderSummary();
+}
+
+function setQuickMargin(val) {
+  const inp = document.getElementById("custom-input-margin");
+  if (inp) inp.value = val;
+  document.querySelectorAll(".quick-margin-chips .q-chip").forEach(c => {
+    c.classList.toggle("active", c.textContent.replace("₹", "").replace(",", "") === String(val));
+  });
+  updateCustomOrderSummary();
+}
+
+function onCustomLeverageSlider(val) {
+  const numInp = document.getElementById("custom-num-leverage");
+  if (numInp) numInp.value = val;
+  updateCustomOrderSummary();
+}
+
+function onCustomLeverageNum(val) {
+  let v = parseInt(val) || 1;
+  v = Math.max(1, Math.min(50, v));
+  const slider = document.getElementById("custom-slider-leverage");
+  if (slider) slider.value = v;
+  updateCustomOrderSummary();
+}
+
+function updateCustomOrderSummary() {
+  const marginInp = document.getElementById("custom-input-margin");
+  const levInp = document.getElementById("custom-num-leverage");
+  const tpInp = document.getElementById("custom-input-tp");
+  const slInp = document.getElementById("custom-input-sl");
+
+  const margin = parseFloat(marginInp ? marginInp.value : 150) || 150;
+  const lev = parseInt(levInp ? levInp.value : 10) || 10;
+  const tp = parseFloat(tpInp ? tpInp.value : 4.5) || 4.5;
+  const sl = parseFloat(slInp ? slInp.value : 2.0) || 2.0;
+
+  const marginDisp = document.getElementById("term-margin-val-display");
+  if (marginDisp) marginDisp.textContent = `₹${margin.toFixed(2)}`;
+
+  const levDisp = document.getElementById("term-leverage-display");
+  if (levDisp) {
+    const label = lev <= 5 ? "Safe Buffer" : lev <= 10 ? "Sweetspot" : lev <= 25 ? "High Risk" : "Extreme";
+    levDisp.textContent = `${lev}x (${label})`;
+    levDisp.style.color = lev <= 10 ? "#38bdf8" : lev <= 25 ? "#f59e0b" : "#ef4444";
+  }
+
+  const contractDisp = document.getElementById("term-preview-contract");
+  if (contractDisp) contractDisp.textContent = `${currentCoin}USDT.P (${customOrderSide})`;
+
+  const notionalInr = margin * lev;
+  const notionalUsd = notionalInr / 90.0;
+  const notionalDisp = document.getElementById("term-preview-notional");
+  if (notionalDisp) notionalDisp.textContent = `₹${notionalInr.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (~$${notionalUsd.toFixed(2)})`;
+
+  const profitInr = margin * ((tp * lev) / 100.0);
+  const profitRoi = tp * lev;
+  const profitDisp = document.getElementById("term-preview-profit");
+  if (profitDisp) profitDisp.textContent = `+₹${profitInr.toFixed(2)} (+${profitRoi.toFixed(1)}% ROI)`;
+
+  const lossInr = margin * ((sl * lev) / 100.0);
+  const lossRisk = sl * lev;
+  const lossDisp = document.getElementById("term-preview-loss");
+  if (lossDisp) lossDisp.textContent = `-₹${lossInr.toFixed(2)} (-${lossRisk.toFixed(1)}% Risk)`;
+}
+
+async function executeCustomOrder() {
+  const marginInp = document.getElementById("custom-input-margin");
+  const levInp = document.getElementById("custom-num-leverage");
+  const tpInp = document.getElementById("custom-input-tp");
+  const slInp = document.getElementById("custom-input-sl");
+
+  const margin_inr = parseFloat(marginInp ? marginInp.value : 150) || 150;
+  const leverage = parseInt(levInp ? levInp.value : 10) || 10;
+  const take_profit_pct = parseFloat(tpInp ? tpInp.value : 4.5) || 4.5;
+  const stop_loss_pct = parseFloat(slInp ? slInp.value : 2.0) || 2.0;
+
+  try {
+    const res = await fetch("/api/bot/manual_order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        coin: currentCoin,
+        side: customOrderSide,
+        margin_inr,
+        leverage,
+        take_profit_pct,
+        stop_loss_pct
+      })
+    });
+    if (!res.ok) {
+      alert("Order could not be submitted right now. Check server status.");
+      return;
+    }
+    const data = await res.json();
+    if (data.status === "success") {
+      alert(`✅ Simulated Futures Order Placed!\n\nContract: ${currentCoin}USDT.P (${customOrderSide})\nMargin: ₹${margin_inr} | Leverage: ${leverage}x\nTarget: +${take_profit_pct}%\nStop-Loss: -${stop_loss_pct}%`);
+      syncBotStatus();
+    }
+  } catch (err) {
+    console.error("Order error:", err);
+  }
+}
+
+async function closeActivePositionManually() {
+  try {
+    const res = await fetch("/api/bot/close_position", { method: "POST" });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.status === "success") {
+      alert(`⏹ Position Closed Successfully!\n\n${data.message}`);
+      syncBotStatus();
+    } else {
+      alert("No active position to close.");
+    }
+  } catch (err) {
+    console.error("Close position error:", err);
+  }
+}
+
+// ==============================================================================
+// 26. DRAG & DROP DASHBOARD PANELS (CUSTOM MONITORING LAYOUT)
+// ==============================================================================
+function initDraggablePanels() {
+  const container = document.querySelector(".sidebar-panels");
+  if (!container) return;
+
+  // Restore saved order if available
+  const savedOrder = localStorage.getItem("coindcx_sidebar_panel_order");
+  if (savedOrder) {
+    try {
+      const panelIds = JSON.parse(savedOrder);
+      panelIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.parentElement === container) {
+          container.appendChild(el);
+        }
+      });
+    } catch (e) {
+      console.warn("Could not parse saved panel order", e);
+    }
+  }
+
+  let draggedEl = null;
+
+  container.addEventListener("dragstart", (e) => {
+    const panel = e.target.closest(".draggable-panel");
+    if (!panel) return;
+    draggedEl = panel;
+    panel.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", panel.id);
+  });
+
+  container.addEventListener("dragend", (e) => {
+    const panel = e.target.closest(".draggable-panel");
+    if (panel) panel.classList.remove("dragging");
+    document.querySelectorAll(".draggable-panel").forEach(p => {
+      p.classList.remove("drag-over-top", "drag-over-bottom");
+    });
+    draggedEl = null;
+    savePanelOrder(container);
+  });
+
+  container.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const target = e.target.closest(".draggable-panel");
+    if (!target || target === draggedEl) return;
+
+    const rect = target.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+
+    document.querySelectorAll(".draggable-panel").forEach(p => {
+      if (p !== target) p.classList.remove("drag-over-top", "drag-over-bottom");
+    });
+
+    if (e.clientY < midY) {
+      target.classList.add("drag-over-top");
+      target.classList.remove("drag-over-bottom");
+    } else {
+      target.classList.add("drag-over-bottom");
+      target.classList.remove("drag-over-top");
+    }
+  });
+
+  container.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const target = e.target.closest(".draggable-panel");
+    if (!target || !draggedEl || target === draggedEl) return;
+
+    const rect = target.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+
+    if (e.clientY < midY) {
+      container.insertBefore(draggedEl, target);
+    } else {
+      container.insertBefore(draggedEl, target.nextSibling);
+    }
+
+    target.classList.remove("drag-over-top", "drag-over-bottom");
+    savePanelOrder(container);
+  });
+}
+
+function savePanelOrder(container) {
+  const panelIds = Array.from(container.querySelectorAll(".draggable-panel")).map(p => p.id);
+  localStorage.setItem("coindcx_sidebar_panel_order", JSON.stringify(panelIds));
 }
 
 // 19b. Toggle Between Paper Simulation and Live Real CoinDCX Trading

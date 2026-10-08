@@ -309,9 +309,10 @@
              Direct answer to: Which Timeframe (1m, 5m, 15m, 1h, 1D),
              Which Direction (LONG / SHORT), and What Leverage (1x - 100x)
              ======================================================== -->
-        <div class="panel-card card-glass advisor-card" id="futures-advisor-card">
+        <div class="panel-card card-glass advisor-card draggable-panel" id="panel-advisor" draggable="true">
           <div class="panel-title-bar">
             <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="drag-handle" title="Drag to reorder panel">⋮⋮</span>
               <span class="advisor-fire-icon">🎯</span>
               <div>
                 <h3 style="margin: 0; font-size: 0.92rem; font-weight: 700; color: #fff;">AI FUTURES TRADE ADVISOR</h3>
@@ -495,9 +496,12 @@
         </div>
 
         <!-- 0. Predictive Forecast ("What Happens Next") -->
-        <div class="panel-card card-glass predictive-card">
+        <div class="panel-card card-glass predictive-card draggable-panel" id="panel-forecast" draggable="true">
           <div class="panel-title-bar">
-            <h3>🔮 WHAT HAPPENS NEXT (FORECAST)</h3>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="drag-handle" title="Drag to reorder panel">⋮⋮</span>
+              <h3>🔮 WHAT HAPPENS NEXT (FORECAST)</h3>
+            </div>
             <span class="badge-predict">QUANT PREDICTOR</span>
           </div>
 
@@ -533,9 +537,12 @@
         </div>
 
         <!-- 1. AI Decision / Price Predictor Card -->
-        <div class="panel-card card-glass">
+        <div class="panel-card card-glass draggable-panel" id="panel-structure" draggable="true">
           <div class="panel-title-bar">
-            <h3>MARKET STRUCTURE & CEILING</h3>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="drag-handle" title="Drag to reorder panel">⋮⋮</span>
+              <h3>MARKET STRUCTURE & CEILING</h3>
+            </div>
             <span class="badge-ai">LIVE METRICS</span>
           </div>
 
@@ -580,9 +587,12 @@
         </div>
 
         <!-- 2. Futures Trading Execution & Multi-Wallet State -->
-        <div class="panel-card card-glass">
+        <div class="panel-card card-glass draggable-panel" id="panel-engine" draggable="true">
           <div class="panel-title-bar">
-            <h3>FUTURES TRADING ENGINE</h3>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="drag-handle" title="Drag to reorder panel">⋮⋮</span>
+              <h3>FUTURES TRADING ENGINE</h3>
+            </div>
             <span class="badge-mode" id="engine-mode-tag">FUTURES WALLET ACTIVE</span>
           </div>
 
@@ -643,17 +653,122 @@
             <p class="pos-details" id="pos-details-text">Bot is scanning market for EMA crossover + RSI confirmation.</p>
           </div>
 
-          <!-- Trade Actions (Manual simulation buttons) -->
-          <div class="trade-controls">
-            <button class="btn-trade btn-buy" onclick="simulateTrade('BUY')">Simulate Buy (₹100)</button>
-            <button class="btn-trade btn-sell" onclick="simulateTrade('SELL')">Simulate Sell (Exit)</button>
+          <!-- ========================================================
+               CUSTOM FUTURES ORDER TERMINAL (INTERACTIVE SIZING & LEVERAGE)
+               ======================================================== -->
+          <div class="terminal-custom-card">
+            <div class="terminal-header-row">
+              <span class="term-lbl">⚡ CUSTOM FUTURES ORDER TERMINAL</span>
+              <span class="term-sub-badge" id="term-sub-badge">DEMO SIMULATION</span>
+            </div>
+
+            <!-- Direction Choice -->
+            <div class="order-side-tabs">
+              <button type="button" class="side-btn active-long" id="btn-side-long" onclick="setCustomOrderSide('LONG')">
+                ▲ GO LONG (BUY)
+              </button>
+              <button type="button" class="side-btn" id="btn-side-short" onclick="setCustomOrderSide('SHORT')">
+                ▼ GO SHORT (SELL)
+              </button>
+            </div>
+
+            <!-- Trade Amount (Margin INR) Input -->
+            <div class="term-input-group">
+              <div class="term-lbl-wrap">
+                <label for="custom-input-margin">Trade Margin (INR):</label>
+                <span class="term-hint" id="term-margin-val-display">₹150.00</span>
+              </div>
+              <div class="term-input-box">
+                <span class="term-currency">₹</span>
+                <input type="number" id="custom-input-margin" value="150" min="50" max="25000" step="10" oninput="updateCustomOrderSummary()">
+              </div>
+              <div class="quick-margin-chips">
+                <button type="button" class="q-chip" onclick="setQuickMargin(100)">₹100</button>
+                <button type="button" class="q-chip active" onclick="setQuickMargin(150)">₹150</button>
+                <button type="button" class="q-chip" onclick="setQuickMargin(300)">₹300</button>
+                <button type="button" class="q-chip" onclick="setQuickMargin(500)">₹500</button>
+                <button type="button" class="q-chip" onclick="setQuickMargin(1000)">₹1,000</button>
+              </div>
+            </div>
+
+            <!-- Leverage Slider & Input -->
+            <div class="term-input-group">
+              <div class="term-lbl-wrap">
+                <label for="custom-input-leverage">Leverage:</label>
+                <span class="term-lev-val text-amber" id="term-leverage-display">10x (Sweetspot)</span>
+              </div>
+              <div class="term-slider-row">
+                <input type="range" id="custom-slider-leverage" min="1" max="50" value="10" step="1" oninput="onCustomLeverageSlider(this.value)">
+                <div class="term-num-input-wrap">
+                  <input type="number" id="custom-num-leverage" min="1" max="50" value="10" oninput="onCustomLeverageNum(this.value)">
+                  <span class="lev-unit">x</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Target Profit % and Stop-Loss % -->
+            <div class="term-two-col">
+              <div class="term-input-group">
+                <label for="custom-input-tp">Take-Profit Target:</label>
+                <div class="term-input-box">
+                  <input type="number" id="custom-input-tp" value="4.5" min="0.5" max="100" step="0.5" oninput="updateCustomOrderSummary()">
+                  <span class="term-unit">%</span>
+                </div>
+              </div>
+              <div class="term-input-group">
+                <label for="custom-input-sl">Stop-Loss Limit:</label>
+                <div class="term-input-box">
+                  <input type="number" id="custom-input-sl" value="2.0" min="0.5" max="50" step="0.5" oninput="updateCustomOrderSummary()">
+                  <span class="term-unit">%</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Dynamic Projected Summary -->
+            <div class="term-preview-card" id="term-preview-card">
+              <div class="p-row">
+                <span>Contract & Price:</span>
+                <span id="term-preview-contract" class="text-cyan">BTCUSDT.P</span>
+              </div>
+              <div class="p-row">
+                <span>Notional Order Value:</span>
+                <span id="term-preview-notional">₹1,500.00 (~$16.67)</span>
+              </div>
+              <div class="p-row">
+                <span>Est. Profit at Target:</span>
+                <span id="term-preview-profit" class="text-green">+₹67.50 (+45.0% ROI)</span>
+              </div>
+              <div class="p-row">
+                <span>Est. Loss at Stop-Loss:</span>
+                <span id="term-preview-loss" class="text-red">-₹30.00 (-20.0% Risk)</span>
+              </div>
+            </div>
+
+            <!-- Interactive Buttons -->
+            <div class="terminal-action-buttons">
+              <button type="button" class="btn-execute-order" id="btn-exec-order" onclick="executeCustomOrder()">
+                🚀 EXECUTE SIMULATED ORDER
+              </button>
+              <button type="button" class="btn-close-position" id="btn-close-order" onclick="closeActivePositionManually()">
+                ⏹ CLOSE ACTIVE POSITION
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Recent Simulated Executions (Separate Draggable Card) -->
+        <div class="panel-card card-glass draggable-panel" id="panel-trades" draggable="true">
+          <div class="panel-title-bar">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="drag-handle" title="Drag to reorder panel">⋮⋮</span>
+              <h3>RECENT EXECUTIONS LOG</h3>
+            </div>
+            <span class="badge-mode">PAPER HISTORY</span>
           </div>
 
-          <!-- Recent Trades Log -->
-          <div class="trade-log-section">
-            <h4>Recent Simulated Executions</h4>
+          <div class="trade-log-section" style="margin-top: 0;">
             <div class="trade-log-list" id="trade-log-list">
-              <div class="empty-trades">No executions yet. Start bot or click simulate!</div>
+              <div class="empty-trades">No executions yet. Start bot or click execute order!</div>
             </div>
           </div>
         </div>

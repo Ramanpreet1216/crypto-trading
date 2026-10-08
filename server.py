@@ -27,20 +27,24 @@ PORT = int(os.environ.get("PORT", 5000))
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 
 def calculate_futures_trade_qty(coin: str, current_price: float, target_margin_inr: float = 150.0, leverage: int = 5):
-    """Calculate order quantity ensuring CoinDCX minimum notional value (>= 612 INR) and ~150 INR margin."""
+    """Calculate order quantity ensuring CoinDCX minimum notional value (>= 620 INR) and target margin."""
     min_notional_inr = 620.0
     usd_inr = 90.0
-    notional_inr = max(min_notional_inr, target_margin_inr * leverage)
-    notional_usd = notional_inr / max(0.00001, current_price)
-    if current_price < 0.01:
-        qty = round(notional_usd, 0)
+    notional_inr = max(min_notional_inr, target_margin_inr * max(1, leverage))
+    notional_usd = notional_inr / usd_inr
+    raw_qty = notional_usd / max(0.000001, current_price)
+
+    if current_price < 0.001:
+        qty = round(raw_qty, 0)
     elif current_price < 1.0:
-        qty = round(notional_usd, 1)
+        qty = round(raw_qty, 1)
     elif current_price < 50.0:
-        qty = round(notional_usd, 2)
+        qty = round(raw_qty, 2)
+    elif current_price < 1000.0:
+        qty = round(raw_qty, 3)
     else:
-        qty = round(notional_usd, 4)
-    actual_margin = (qty * current_price * usd_inr) / leverage
+        qty = round(raw_qty, 5)
+    actual_margin = (qty * current_price * usd_inr) / max(1, leverage)
     return qty, round(actual_margin, 2)
 
 
@@ -756,6 +760,142 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
                 "status": "success",
                 "current_mode": config.CURRENT_RISK_MODE,
                 "profile": config.RISK_PROFILES.get(config.CURRENT_RISK_MODE, {})
+            }).encode("utf-8"))
+            return
+
+        elif path == "/api/bot/manual_order":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length).decode("utf-8")
+            data = json.loads(body)
+            coin = data.get("coin", bot_state.get("selected_coin", "BTC")).upper()
+            side = data.get("side", "LONG").upper()
+            margin_inr = float(data.get("margin_inr", 150.0))
+            lev = int(data.get("leverage", 10))
+            tp_pct = float(data.get("take_profit_pct", 4.5))
+            sl_pct = float(data.get("stop_loss_pct", 2.0))
+
+            client = CoinDCXClient()
+            stats = client.get_futures_stats(coin)
+            curr_price = float(stats.get("mark_price", 0) or stats.get("last_price", 0) or 50000.0)
+            if curr_price <= 0:
+                candles = client.get_futures_candles(coin, interval="15m", limit=2)
+                if candles:
+                    curr_price = float(candles[-1].get("close", 50000.0))
+
+            qty, actual_spend = calculate_futures_trade_qty(coin, curr_price, target_margin_inr=margin_inr, leverage=lev)
+            pair = f"B-{coin}_USDT"
+
+            if side == "LONG":
+                target_p = round(curr_price * (1.0 + (tp_pct / 100.0)), 4)
+                stop_p = round(curr_price * (1.0 - (sl_pct / 100.0)), 4)
+            else:
+                target_p = round(curr_price * (1.0 - (tp_pct / 100.0)), 4)
+                stop_p = round(curr_price * (1.0 + (sl_pct / 100.0)), 4)
+
+            # If live mode, place live order on CoinDCX
+            if not config.DRY_RUN:
+                try:
+                    order_side = "buy" if side == "LONG" else "sell"
+                    live_res = client.place_futures_order(order_side, pair=pair, quantity=qty, leverage=lev)
+                    print(f"[LIVE MANUAL ORDER]: {live_res}")
+                except Exception as live_err:
+                    print(f"[LIVE MANUAL ORDER ERROR]: {live_err}")
+
+            bot_state["active_position"] = {
+                "symbol": coin,
+                "pair": pair,
+                "side": side,
+                "buy_price": curr_price,
+                "quantity": qty,
+                "invested": actual_spend,
+                "leverage": lev,
+                "target": target_p,
+                "stop_loss": stop_p,
+                "trailing_stop": stop_p,
+                "peak_price": curr_price,
+                "tp_pct": tp_pct,
+                "sl_pct": sl_pct,
+                "time": datetime.now().strftime("%H:%M:%S")
+            }
+            bot_state["selected_coin"] = coin
+            bot_state["selected_pair"] = pair
+            bot_state["last_signal"] = f"MANUAL {side} [{coin}]"
+            bot_state["last_reason"] = f"User executed {side} ({lev}x): Target ${target_p}, SL ${stop_p}"
+            bot_state["trade_history"].insert(0, {
+                "type": "BUY" if side == "LONG" else "SHORT",
+                "coin": coin,
+                "price": curr_price,
+                "amount": actual_spend,
+                "note": f"Manual {side} {lev}x: Target ${target_p}, SL ${stop_p}",
+                "time": datetime.now().strftime("%H:%M:%S")
+            })
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "success",
+                "message": f"Executed {side} on {coin} with INR {actual_spend} ({lev}x)",
+                "position": bot_state["active_position"]
+            }).encode("utf-8"))
+            return
+
+        elif path == "/api/bot/close_position":
+            pos = bot_state.get("active_position")
+            if not pos:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "no_position", "message": "No active trade to close"}).encode("utf-8"))
+                return
+
+            client = CoinDCXClient()
+            stats = client.get_futures_stats(pos["symbol"])
+            curr_price = float(stats.get("mark_price", 0) or stats.get("last_price", 0) or pos["buy_price"])
+            lev = pos.get("leverage", 10)
+            side = pos.get("side", "LONG")
+
+            if side == "LONG":
+                pnl_pct = ((curr_price - pos["buy_price"]) / max(1e-6, pos["buy_price"])) * 100.0 * lev
+            else:
+                pnl_pct = ((pos["buy_price"] - curr_price) / max(1e-6, pos["buy_price"])) * 100.0 * lev
+
+            pnl_inr = round(pos["invested"] * (pnl_pct / 100.0), 2)
+            proceeds = round(pos["invested"] + pnl_inr, 2)
+            bot_state["paper_balance"] = round(bot_state["paper_balance"] + proceeds, 2)
+
+            if not config.DRY_RUN:
+                try:
+                    close_side = "sell" if side == "LONG" else "buy"
+                    client.place_futures_order(close_side, pair=pos["pair"], quantity=pos["quantity"], leverage=lev)
+                except Exception as live_err:
+                    print(f"[LIVE MANUAL CLOSE ERROR]: {live_err}")
+
+            bot_state["last_signal"] = f"MANUAL EXIT [{pos['symbol']}]"
+            bot_state["last_reason"] = f"Closed {pos['symbol']} at ${curr_price:.4f} (PnL: {pnl_pct:+.1f}%, INR {pnl_inr:+.2f})"
+            bot_state["trade_history"].insert(0, {
+                "type": "SELL",
+                "coin": pos["symbol"],
+                "price": curr_price,
+                "amount": proceeds,
+                "pnl": pnl_inr,
+                "pnl_pct": round(pnl_pct, 2),
+                "reason": "Manual Close Button",
+                "time": datetime.now().strftime("%H:%M:%S")
+            })
+            bot_state["active_position"] = None
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "success",
+                "message": f"Position closed. PnL: INR {pnl_inr:+.2f} ({pnl_pct:+.1f}%)",
+                "pnl": pnl_inr,
+                "pnl_pct": round(pnl_pct, 2)
             }).encode("utf-8"))
             return
 
