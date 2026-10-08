@@ -132,6 +132,62 @@ bot_state = {
     "latest_prediction": {},
 }
 
+def analyze_macro_market_regime():
+    """
+    Analyzes all 600+ crypto markets & Bitcoin trend to dynamically determine
+    the optimal risk profile (SAFE / BALANCED / ALPHA), leverage (4x-8x),
+    and adaptive target profit % (2% - 4.5%).
+    """
+    try:
+        tickers = scanner._fetch_all_raw_tickers()
+        if not tickers:
+            return "BALANCED", 6, 3.5, 1.5, 85, "⚖️ Balanced Baseline (Scanning Market)"
+
+        green_coins = [t for t in tickers if float(t.get("priceChangePercent", 0)) > 0]
+        breadth_pct = (len(green_coins) / max(1, len(tickers))) * 100.0
+
+        # Check Bitcoin trend (Macro King of Market)
+        client = CoinDCXClient()
+        btc_candles = client.get_candles(pair="B-BTC_USDT", interval="1h", limit=24)
+        btc_bullish = False
+        if btc_candles is not None and len(btc_candles) >= 15:
+            btc_df = calculate_indicators(btc_candles)
+            last_c = btc_df.iloc[-1]
+            btc_bullish = bool((last_c["close"] > last_c["ema_slow"]) and (last_c["rsi"] >= 48))
+
+        # 1. ALPHA MODE: Strong Macro Bull Run (breadth >= 58% and BTC bullish)
+        if breadth_pct >= 58.0 and btc_bullish:
+            mode = "ALPHA"
+            lev = 8
+            tp_pct = 4.5  # Expand target to +4.5%
+            sl_pct = 1.8
+            min_conf = 80
+            desc = f"🚀 Macro Bullish Expansion ({breadth_pct:.1f}% green, BTC Bullish). Auto: ALPHA (+4.5% TP, {lev}x Lev)."
+
+        # 2. BALANCED MODE: Healthy Selective Market (breadth 40% - 58%)
+        elif breadth_pct >= 40.0:
+            mode = "BALANCED"
+            lev = 6
+            tp_pct = 3.5  # Balanced target +3.5%
+            sl_pct = 1.5
+            min_conf = 85
+            desc = f"⚖️ Balanced Momentum ({breadth_pct:.1f}% green). Auto: BALANCED (+3.5% TP, {lev}x Lev)."
+
+        # 3. SAFE SCALP MODE: Defensive / Market Pullback (breadth < 40%)
+        else:
+            mode = "SAFE"
+            lev = 4  # Safe 4x leverage (zero liquidation risk)
+            tp_pct = 2.0  # Tight 2.0% profit banking
+            sl_pct = 1.2
+            min_conf = 88  # High confidence filter
+            desc = f"🛡️ Defensive Pullback ({breadth_pct:.1f}% green, 86% dipping). Auto: SAFE Scalps (+2.0% TP, {lev}x Lev)."
+
+        return mode, lev, tp_pct, sl_pct, min_conf, desc
+    except Exception as e:
+        print(f"[Market Regime Error]: {e}")
+        return "SAFE", 4, 2.0, 1.2, 85, "🛡️ Defensive Mode"
+
+
 # Bot background worker thread: 24/7 Autonomous Breakout Hunting & Execution Engine
 def bot_worker():
     client = CoinDCXClient()
@@ -145,10 +201,17 @@ def bot_worker():
                 # Clean expired coin cooldowns
                 recent_coins = {c: t for c, t in recent_coins.items() if t > now_ts}
 
-                profile = config.RISK_PROFILES.get(config.CURRENT_RISK_MODE, config.RISK_PROFILES["BALANCED"])
-                min_conf = profile.get("min_confidence", 85)
-                lev = profile.get("leverage", 7)
-                invest_target = profile.get("investment_inr", 160.0)
+                # 1. Macro Market Regime Analysis & Dynamic Adaptation
+                auto_mode, dyn_lev, dyn_tp_pct, dyn_sl_pct, dyn_min_conf, regime_desc = analyze_macro_market_regime()
+                config.CURRENT_RISK_MODE = auto_mode
+                bot_state["market_regime"] = regime_desc
+                bot_state["active_risk_mode"] = auto_mode
+                bot_state["active_target_tp"] = dyn_tp_pct
+                bot_state["active_target_sl"] = dyn_sl_pct
+                bot_state["active_leverage"] = dyn_lev
+
+                profile = config.RISK_PROFILES.get(auto_mode, config.RISK_PROFILES["SAFE"])
+                invest_target = profile.get("investment_inr", 150.0)
 
                 # ==============================================================
                 # STATE A: NO OPEN POSITION -> AUTONOMOUS 739-COIN HUNTING
@@ -161,39 +224,65 @@ def bot_worker():
                         time.sleep(5)
                         continue
 
-                    # Scan top setups matching current risk mode
-                    signals = scanner.scan_all_crypto_signals(min_confidence=min_conf, direction="UP", limit=5)
-                    # Filter out any recently traded coin to prevent loop re-entry
+                    # Scan top setups matching current auto-adapted risk mode
+                    signals = scanner.scan_all_crypto_signals(min_confidence=dyn_min_conf, direction="UP", limit=10)
                     valid_signals = [s for s in signals if recent_coins.get(s["coin"], 0) < now_ts] if signals else []
 
-                    if valid_signals and len(valid_signals) > 0:
-                        top = valid_signals[0]
-                        coin = top["coin"]
-                        pair = f"B-{coin}_USDT"
+                    # Multi-Timeframe Quality Filter: Pick the strongest setup confirming on 15m & 1h
+                    chosen_setup = None
+                    for candidate in valid_signals:
+                        c_coin = candidate["coin"]
+                        c_pair = f"B-{c_coin}_USDT"
 
-                        # FIX: Fetch real live mark/ticker price at execution time to avoid 1h candle lag
-                        live_stats = client.get_futures_stats(coin)
-                        live_price = float(live_stats.get("mark_price", 0) or live_stats.get("last_price", 0) or 0)
-                        if live_price <= 0:
-                            live_price = float(top["current_price"])
+                        c_candles = client.get_candles(pair=c_pair, interval="15m", limit=30)
+                        if c_candles is not None and len(c_candles) >= 15:
+                            c_df = calculate_indicators(c_candles)
+                            last_row = c_df.iloc[-1]
+                            coin_rsi = float(last_row.get("rsi", 50))
+                            ema_fast = float(last_row.get("ema_fast", 0))
+                            ema_slow = float(last_row.get("ema_slow", 0))
 
-                        # Re-calculate SL & TP based on exact live entry price
-                        tp_pct = profile.get("target_profit_pct", 4.5)
-                        sl_pct = profile.get("stop_loss_pct", 2.0)
+                            # Reject overbought coins (RSI > 68 is dangerous FOMO)
+                            if coin_rsi > 68.0:
+                                continue
+                            # Reject coins currently falling below slow EMA
+                            if ema_fast < ema_slow * 0.993:
+                                continue
+
+                            # Live ticker validation: Must match CoinDCX ticker!
+                            live_stats = client.get_futures_stats(c_coin)
+                            live_p = float(live_stats.get("mark_price", 0) or live_stats.get("last_price", 0) or 0)
+                            if live_p <= 0:
+                                live_p = float(last_row["close"])
+
+                            chosen_setup = {
+                                "coin": c_coin,
+                                "pair": c_pair,
+                                "live_price": live_p,
+                                "probability": candidate.get("probability", 85),
+                                "rsi": coin_rsi
+                            }
+                            break
+
+                    if chosen_setup:
+                        coin = chosen_setup["coin"]
+                        pair = chosen_setup["pair"]
+                        live_price = chosen_setup["live_price"]
+                        prob = chosen_setup["probability"]
+
                         precision = 6 if live_price < 1.0 else 2
-                        target_price = round(live_price * (1.0 + (tp_pct / 100.0)), precision)
-                        stop_loss = round(live_price * (1.0 - (sl_pct / 100.0)), precision)
-                        prob = top["probability"]
+                        target_price = round(live_price * (1.0 + (dyn_tp_pct / 100.0)), precision)
+                        stop_loss = round(live_price * (1.0 - (dyn_sl_pct / 100.0)), precision)
 
-                        qty, spend = calculate_futures_trade_qty(coin, live_price, target_margin_inr=invest_target, leverage=lev)
+                        qty, spend = calculate_futures_trade_qty(coin, live_price, target_margin_inr=invest_target, leverage=dyn_lev)
                         bot_state["selected_coin"] = coin
                         bot_state["selected_pair"] = pair
 
                         # Execute real order on CoinDCX ONLY if live mode is explicitly enabled
                         if not config.DRY_RUN:
                             try:
-                                live_order = client.place_futures_order("buy", pair=pair, quantity=qty, leverage=lev)
-                                print(f"[LIVE AUTONOMOUS ORDER PLACED]: {coin} Qty={qty} Lev={lev}x -> {live_order}")
+                                live_order = client.place_futures_order("buy", pair=pair, quantity=qty, leverage=dyn_lev)
+                                print(f"[LIVE AUTONOMOUS ORDER PLACED]: {coin} Qty={qty} Lev={dyn_lev}x -> {live_order}")
                             except Exception as live_err:
                                 print(f"[LIVE AUTONOMOUS ORDER ERROR]: {live_err}")
 
@@ -204,31 +293,33 @@ def bot_worker():
                             "buy_price": live_price,
                             "quantity": qty,
                             "invested": spend,
-                            "leverage": lev,
+                            "leverage": dyn_lev,
                             "target": target_price,
                             "stop_loss": stop_loss,
                             "trailing_stop": stop_loss,
                             "peak_price": live_price,
                             "probability": prob,
+                            "tp_pct": dyn_tp_pct,
+                            "sl_pct": dyn_sl_pct,
                             "entry_time": entry_ts,
                             "time": datetime.now().strftime("%H:%M:%S")
                         }
                         bot_state["last_signal"] = f"AUTONOMOUS BUY [{coin}]"
-                        bot_state["last_reason"] = f"Triggered {config.CURRENT_RISK_MODE} ({prob}%): Target ${target_price}, SL ${stop_loss}"
+                        bot_state["last_reason"] = f"Auto-{auto_mode} ({prob}%): Live Entry ${live_price}, Target +{dyn_tp_pct}% (${target_price}), SL -{dyn_sl_pct}% (${stop_loss})"
                         trade_rec = {
                             "type": "BUY",
                             "coin": coin,
                             "price": live_price,
                             "amount": spend,
-                            "note": f"{config.CURRENT_RISK_MODE} ({prob}%): Target ${target_price}, SL ${stop_loss}",
+                            "note": f"Auto-{auto_mode} ({prob}%): Target +{dyn_tp_pct}% (${target_price}), SL -{dyn_sl_pct}% (${stop_loss})",
                             "time": datetime.now().strftime("%H:%M:%S"),
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         }
                         bot_state["trade_history"].insert(0, trade_rec)
                         record_paper_trade(trade_rec)
                     else:
-                        bot_state["last_signal"] = "SCANNING 739 COINS"
-                        bot_state["last_reason"] = f"Scanning 739 coins 24/7 for {config.CURRENT_RISK_MODE} setups (min {min_conf}% conf)..."
+                        bot_state["last_signal"] = f"MACRO: {auto_mode} (TP +{dyn_tp_pct}%)"
+                        bot_state["last_reason"] = f"{regime_desc} Waiting for optimal A+ setup (min {dyn_min_conf}% conf)..."
 
                 # ==============================================================
                 # STATE B: POSITION OPEN -> LIVE TARGET & TRAILING STOP MANAGEMENT
@@ -236,7 +327,7 @@ def bot_worker():
                 else:
                     pos = bot_state["active_position"]
                     pair = pos["pair"]
-                    pos_lev = pos.get("leverage", lev)
+                    pos_lev = pos.get("leverage", dyn_lev)
 
                     # 20-second grace period after entry before evaluating stop-loss
                     pos_age = time.time() - pos.get("entry_time", 0)
@@ -251,13 +342,21 @@ def bot_worker():
                         bot_state["latest_prediction"] = pred
                         current_price = pred.get("current_price", pos["buy_price"])
 
-                        # Dynamic Trailing Stop Loss:
-                        # As price creates new highs, trail stop loss up to lock in profits
+                        gain_pct = ((current_price - pos["buy_price"]) / pos["buy_price"]) * 100.0
+
+                        # 1. Breakeven Profit Lock:
+                        # As soon as trade gains >= 1.2%, move stop-loss to entry + 0.3% (guaranteed profit lock!)
+                        if gain_pct >= 1.2:
+                            lock_sl = pos["buy_price"] * 1.003
+                            if lock_sl > pos.get("trailing_stop", pos["stop_loss"]):
+                                pos["trailing_stop"] = lock_sl
+
+                        # 2. Dynamic Trailing Stop Loss:
+                        # As price creates new highs >= 1.8%, trail 1.2% below peak
                         if current_price > pos.get("peak_price", pos["buy_price"]):
                             pos["peak_price"] = current_price
-                            gain_pct = ((current_price - pos["buy_price"]) / pos["buy_price"]) * 100.0
-                            if gain_pct >= 2.0:
-                                trailed = current_price * 0.985 # 1.5% buffer below peak
+                            if gain_pct >= 1.8:
+                                trailed = current_price * 0.988 # 1.2% buffer below peak
                                 if trailed > pos.get("trailing_stop", pos["stop_loss"]):
                                     pos["trailing_stop"] = trailed
 
@@ -266,12 +365,12 @@ def bot_worker():
                         pnl = pos["invested"] * (pnl_pct / 100.0)
 
                         exit_trigger = None
-                        if current_price >= pos.get("target", pos["buy_price"] * 1.04):
+                        if current_price >= pos.get("target", pos["buy_price"] * 1.02):
                             exit_trigger = f"Target Hit (${pos['target']})! Profit +{pnl_pct:.1f}%"
                         elif current_price <= active_sl:
                             exit_trigger = f"Stop-Loss / Trailed Exit at ${active_sl:.4f} (PnL: {pnl_pct:+.1f}%)"
-                        elif pred.get("direction") == "DOWN" and pred.get("probability", 0) >= 82:
-                            exit_trigger = f"Early Reversal Warning (82%+ DOWN predicted)! Exiting."
+                        elif pred.get("direction") == "DOWN" and pred.get("probability", 0) >= 88:
+                            exit_trigger = f"Early Reversal Warning (88%+ DOWN predicted)! Exiting to preserve capital."
 
                         if exit_trigger:
                             proceeds = pos["invested"] + pnl

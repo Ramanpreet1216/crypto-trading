@@ -1001,6 +1001,41 @@ async function syncBotStatus() {
       elBotToggleIcon.textContent = "▶";
     }
 
+    // Dynamic 24/7 Market Regime HUD
+    if (data.market_regime) {
+      const modeBadge = document.getElementById("risk-mode-badge");
+      const modeDesc = document.getElementById("risk-mode-desc");
+      const activeMode = data.active_risk_mode || data.risk_mode;
+      const tpTarget = data.active_target_tp || (activeMode === 'SAFE' ? 2.0 : (activeMode === 'ALPHA' ? 4.5 : 3.5));
+
+      if (modeBadge) {
+        modeBadge.textContent = `AUTO: ${activeMode} (TP +${tpTarget}%)`;
+        if (activeMode === "ALPHA" || activeMode === "AGGRESSIVE") {
+          modeBadge.style.color = "#f59e0b";
+          modeBadge.style.background = "rgba(245, 158, 11, 0.2)";
+        } else if (activeMode === "SAFE") {
+          modeBadge.style.color = "#10b981";
+          modeBadge.style.background = "rgba(16, 185, 129, 0.2)";
+        } else {
+          modeBadge.style.color = "#38bdf8";
+          modeBadge.style.background = "rgba(56, 189, 248, 0.2)";
+        }
+      }
+
+      if (modeDesc) {
+        modeDesc.textContent = data.market_regime;
+      }
+
+      const btnSafe = document.getElementById("risk-btn-safe");
+      const btnBalanced = document.getElementById("risk-btn-balanced");
+      const btnAggressive = document.getElementById("risk-btn-aggressive");
+      if (btnSafe && btnBalanced && btnAggressive) {
+        btnSafe.classList.toggle("active", activeMode === "SAFE");
+        btnBalanced.classList.toggle("active", activeMode === "BALANCED");
+        btnAggressive.classList.toggle("active", activeMode === "ALPHA" || activeMode === "AGGRESSIVE");
+      }
+    }
+
     if (data.active_position) {
       const pos = data.active_position;
       elPosBadge.textContent = `ACTIVE [${pos.symbol}]`;

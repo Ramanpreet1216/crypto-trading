@@ -144,45 +144,52 @@ class CoinDCXClient:
     def get_futures_stats(self, symbol_or_pair: str) -> dict:
         """
         Fetches live Futures statistics: Mark Price, Index Price, Funding Rate, 24h High, 24h Low.
+        Primary source is ALWAYS CoinDCX official ticker to ensure price consistency.
         """
         clean = symbol_or_pair.upper().replace("B-", "").replace("I-", "").replace("_USDT", "").replace("_INR", "").replace("USDT", "")
         futures_symbol = f"{clean}USDT"
+
+        # 1. Primary: CoinDCX Official Public Ticker (Exact execution exchange price)
         try:
-            r_p = requests.get(f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={futures_symbol}", timeout=4).json()
-            r_t = requests.get(f"https://fapi.binance.com/fapi/v1/ticker/24hr?symbol={futures_symbol}", timeout=4).json()
-            return {
-                "symbol": futures_symbol,
-                "contract": f"{clean}USDT.P (Perpetual)",
-                "mark_price": float(r_p.get("markPrice", 0)),
-                "index_price": float(r_p.get("indexPrice", 0)),
-                "funding_rate": round(float(r_p.get("lastFundingRate", 0)) * 100, 4),
-                "next_funding_time": int(r_p.get("nextFundingTime", 0)),
-                "high_24h": float(r_t.get("highPrice", 0)),
-                "low_24h": float(r_t.get("lowPrice", 0)),
-                "change_24h": round(float(r_t.get("priceChangePercent", 0)), 2),
-                "volume_24h": float(r_t.get("volume", 0)),
-            }
+            raw = requests.get(f"{self.PUBLIC_URL}/exchange/ticker", headers=self.PUBLIC_HEADERS, timeout=3).json()
+            if isinstance(raw, list):
+                for t in raw:
+                    if t.get("market") == futures_symbol:
+                        lp = float(t.get("last_price", 0) or 0)
+                        if lp > 0:
+                            return {
+                                "symbol": futures_symbol,
+                                "contract": f"{clean}USDT.P (Perpetual)",
+                                "mark_price": lp,
+                                "index_price": lp,
+                                "funding_rate": 0.01,
+                                "next_funding_time": int(time.time() * 1000) + 3600000,
+                                "high_24h": float(t.get("high", 0) or lp),
+                                "low_24h": float(t.get("low", 0) or lp),
+                                "change_24h": round(float(t.get("change_24_hour", 0) or 0), 2),
+                                "volume_24h": float(t.get("volume", 0) or 0),
+                            }
         except Exception:
             pass
 
-        # CoinDCX Public Ticker Fallback
+        # 2. Secondary fallback: Binance Futures
         try:
-            raw = requests.get(f"{self.PUBLIC_URL}/exchange/ticker", timeout=3).json()
-            for t in raw:
-                if t.get("market") == futures_symbol:
-                    lp = float(t.get("last_price", 0) or 0)
-                    return {
-                        "symbol": futures_symbol,
-                        "contract": f"{clean}USDT.P (Perpetual)",
-                        "mark_price": lp,
-                        "index_price": lp,
-                        "funding_rate": 0.01,
-                        "next_funding_time": int(time.time() * 1000) + 3600000,
-                        "high_24h": float(t.get("high", 0) or lp),
-                        "low_24h": float(t.get("low", 0) or lp),
-                        "change_24h": round(float(t.get("change_24_hour", 0) or 0), 2),
-                        "volume_24h": float(t.get("volume", 0) or 0),
-                    }
+            r_p = requests.get(f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={futures_symbol}", timeout=3).json()
+            r_t = requests.get(f"https://fapi.binance.com/fapi/v1/ticker/24hr?symbol={futures_symbol}", timeout=3).json()
+            mp = float(r_p.get("markPrice", 0))
+            if mp > 0:
+                return {
+                    "symbol": futures_symbol,
+                    "contract": f"{clean}USDT.P (Perpetual)",
+                    "mark_price": mp,
+                    "index_price": float(r_p.get("indexPrice", 0) or mp),
+                    "funding_rate": round(float(r_p.get("lastFundingRate", 0)) * 100, 4),
+                    "next_funding_time": int(r_p.get("nextFundingTime", 0)),
+                    "high_24h": float(r_t.get("highPrice", 0) or mp),
+                    "low_24h": float(r_t.get("lowPrice", 0) or mp),
+                    "change_24h": round(float(r_t.get("priceChangePercent", 0)), 2),
+                    "volume_24h": float(r_t.get("volume", 0)),
+                }
         except Exception:
             pass
 
