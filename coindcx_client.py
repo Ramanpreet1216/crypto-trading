@@ -17,6 +17,11 @@ class CoinDCXClient:
     PUBLIC_URL = "https://public.coindcx.com"
     API_URL = "https://api.coindcx.com"
 
+    PUBLIC_HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    }
+
     def __init__(self, api_key: str = "", api_secret: str = ""):
         self.api_key = api_key or config.COINDCX_API_KEY
         self.api_secret = api_secret or config.COINDCX_API_SECRET
@@ -30,6 +35,7 @@ class CoinDCXClient:
         ).hexdigest()
         return {
             "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "X-AUTH-APIKEY": self.api_key,
             "X-AUTH-SIGNATURE": signature,
         }
@@ -38,7 +44,7 @@ class CoinDCXClient:
         """Fetch current market price for symbol (e.g., BTCINR)."""
         try:
             url = f"{self.API_URL}/exchange/ticker"
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, headers=self.PUBLIC_HEADERS, timeout=4)
             if response.status_code == 200:
                 tickers = response.json()
                 for ticker in tickers:
@@ -93,7 +99,7 @@ class CoinDCXClient:
         try:
             url = f"{self.PUBLIC_URL}/market_data/candles"
             params = {"pair": f"B-{clean}_USDT", "interval": tf, "limit": limit}
-            res = requests.get(url, params=params, timeout=4)
+            res = requests.get(url, params=params, headers=self.PUBLIC_HEADERS, timeout=3)
             if res.status_code == 200:
                 raw = res.json()
                 if isinstance(raw, list) and len(raw) > 0:
@@ -115,7 +121,7 @@ class CoinDCXClient:
         try:
             url = "https://fapi.binance.com/fapi/v1/klines"
             params = {"symbol": futures_symbol, "interval": tf, "limit": limit}
-            res = requests.get(url, params=params, timeout=3)
+            res = requests.get(url, params=params, headers=self.PUBLIC_HEADERS, timeout=3)
             if res.status_code == 200:
                 raw = res.json()
                 candles = []

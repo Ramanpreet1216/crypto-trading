@@ -268,7 +268,7 @@ def alert_monitor_worker():
         except Exception as e:
             print(f"[Alert Monitor Worker Error]: {e}")
 
-        time.sleep(25)
+        time.sleep(120)
 
 alert_thread = threading.Thread(target=alert_monitor_worker, daemon=True)
 alert_thread.start()
@@ -294,7 +294,29 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Expires", "0")
         super().end_headers()
 
+    def _send_json_error(self, message: str, code: int = 500):
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(message), "status": "error"}).encode("utf-8"))
+        except Exception:
+            pass
+
     def do_GET(self):
+        try:
+            self._handle_get()
+        except Exception as e:
+            self._send_json_error(str(e), 500)
+
+    def do_POST(self):
+        try:
+            self._handle_post()
+        except Exception as e:
+            self._send_json_error(str(e), 500)
+
+    def _handle_get(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
@@ -630,7 +652,7 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
         # Fallback to serving web directory files (HTML, CSS, JS)
         return super().do_GET()
 
-    def do_POST(self):
+    def _handle_post(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 

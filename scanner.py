@@ -24,6 +24,12 @@ _TICKER_CACHE = {
 }
 
 
+PUBLIC_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json"
+}
+
+
 def _fetch_all_raw_tickers():
     """Fetches raw 24hr tickers with 5-second caching using CoinDCX official public API."""
     global _TICKER_CACHE
@@ -33,7 +39,7 @@ def _fetch_all_raw_tickers():
 
     # 1. Primary: CoinDCX Official Public Ticker (Fast, never blocked in India / cloud)
     try:
-        raw = requests.get(f"{PUBLIC_URL}/exchange/ticker", timeout=5).json()
+        raw = requests.get(f"{PUBLIC_URL}/exchange/ticker", headers=PUBLIC_HEADERS, timeout=4).json()
         if isinstance(raw, list) and len(raw) > 0:
             converted = []
             for t in raw:
