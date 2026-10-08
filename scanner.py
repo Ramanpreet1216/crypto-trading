@@ -17,12 +17,11 @@ from typing import List, Dict, Any, Optional
 PUBLIC_URL = "https://public.coindcx.com"
 API_URL = "https://api.coindcx.com"
 
-# In-memory ticker cache (refreshed every 5 seconds)
+# In-memory ticker cache (refreshed every 30 seconds to prevent cloud CPU starvation)
 _TICKER_CACHE = {
     "data": [],
     "timestamp": 0
 }
-
 
 PUBLIC_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -31,15 +30,15 @@ PUBLIC_HEADERS = {
 
 
 def _fetch_all_raw_tickers():
-    """Fetches raw 24hr tickers with 5-second caching using CoinDCX official public API."""
+    """Fetches raw 24hr tickers with 30-second caching using CoinDCX official public API."""
     global _TICKER_CACHE
     now = time.time()
-    if _TICKER_CACHE["data"] and (now - _TICKER_CACHE["timestamp"]) < 5.0:
+    if _TICKER_CACHE["data"] and (now - _TICKER_CACHE["timestamp"]) < 30.0:
         return _TICKER_CACHE["data"]
 
     # 1. Primary: CoinDCX Official Public Ticker (Fast, never blocked in India / cloud)
     try:
-        raw = requests.get(f"{PUBLIC_URL}/exchange/ticker", headers=PUBLIC_HEADERS, timeout=4).json()
+        raw = requests.get(f"{PUBLIC_URL}/exchange/ticker", headers=PUBLIC_HEADERS, timeout=3.5).json()
         if isinstance(raw, list) and len(raw) > 0:
             converted = []
             for t in raw:
@@ -66,9 +65,9 @@ def _fetch_all_raw_tickers():
     except Exception as e:
         print(f"[CoinDCX Ticker API Notice]: {e}")
 
-    # 2. Secondary fallback: Binance Futures Ticker
+    # 2. Secondary fallback: Binance Futures Ticker with browser headers
     try:
-        tickers = requests.get("https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=3).json()
+        tickers = requests.get("https://fapi.binance.com/fapi/v1/ticker/24hr", headers=PUBLIC_HEADERS, timeout=2.5).json()
         if isinstance(tickers, list) and len(tickers) > 0:
             _TICKER_CACHE["data"] = tickers
             _TICKER_CACHE["timestamp"] = now
@@ -163,10 +162,10 @@ _ANALYZE_CACHE = {}
 
 
 def get_market_radar(limit: int = 10):
-    """Fetches top Bullish (gainers) and top Bearish (losers) Perpetual Futures on CoinDCX with 15s cache."""
+    """Fetches top Bullish (gainers) and top Bearish (losers) Perpetual Futures on CoinDCX with 45s cache."""
     global _RADAR_CACHE
     now = time.time()
-    if _RADAR_CACHE["data"] and (now - _RADAR_CACHE["timestamp"]) < 15.0:
+    if _RADAR_CACHE["data"] and (now - _RADAR_CACHE["timestamp"]) < 45.0:
         return _RADAR_CACHE["data"]
 
     gainers = get_all_cryptos(sort_by="gainers", limit=limit)
@@ -195,13 +194,13 @@ def get_market_radar(limit: int = 10):
 
 def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", limit: int = 35) -> List[Dict[str, Any]]:
     """
-    High-Performance Multi-Crypto Quantitative Scanner with 30s in-memory caching.
+    High-Performance Multi-Crypto Quantitative Scanner with 90s in-memory caching.
     """
     global _SIGNALS_CACHE
     now = time.time()
     cache_key = (min_confidence, direction, limit)
     cached = _SIGNALS_CACHE.get(cache_key)
-    if cached and (now - cached["timestamp"]) < 30.0:
+    if cached and (now - cached["timestamp"]) < 90.0:
         return cached["data"]
 
     from coindcx_client import CoinDCXClient
@@ -215,7 +214,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     if not usdt_pairs:
         return []
 
-    # Gather top candidates: 8 top gainers, 8 top losers, 8 highest volume
+    # Gather top candidates: 4 top gainers, 4 top losers, 4 highest volume (cloud lightweight)
     usdt_pairs_sorted_gain = sorted(usdt_pairs, key=lambda x: float(x.get("priceChangePercent", 0)), reverse=True)
     usdt_pairs_sorted_vol = sorted(usdt_pairs, key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)
     usdt_pairs_sorted_loss = sorted(usdt_pairs, key=lambda x: float(x.get("priceChangePercent", 0)))
@@ -223,7 +222,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     candidate_symbols = []
     seen = set()
 
-    for pool in [usdt_pairs_sorted_gain[:8], usdt_pairs_sorted_loss[:8], usdt_pairs_sorted_vol[:8]]:
+    for pool in [usdt_pairs_sorted_gain[:4], usdt_pairs_sorted_loss[:4], usdt_pairs_sorted_vol[:4]]:
         for item in pool:
             sym = item.get("symbol", "").replace("USDT", "")
             if sym.isascii() and sym.isalnum() and sym not in seen:
@@ -235,7 +234,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     def _eval_coin(coin_tuple):
         coin, chg_24h, vol_usdt = coin_tuple
         try:
-            candles = client.get_futures_candles(coin, interval="1h", limit=30)
+            candles = client.get_futures_candles(coin, interval="1h", limit=25)
             if not candles or len(candles) < 15:
                 return None
             df = pd.DataFrame(candles[::-1])
@@ -274,8 +273,8 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
         except Exception:
             return None
 
-    # Lightweight parallel evaluation with 4 workers (cloud friendly)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+    # Lightweight parallel evaluation with 3 workers (cloud friendly)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         scan_results = [r for r in executor.map(_eval_coin, candidate_symbols) if r is not None]
 
     scan_results.sort(key=lambda x: (x["probability"], abs(x["expected_change_pct"])), reverse=True)

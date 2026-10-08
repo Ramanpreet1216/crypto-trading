@@ -155,35 +155,39 @@ function calculateEMA(data, span) {
 document.addEventListener("DOMContentLoaded", () => {
   setupCanvasEvents();
   updateSoundButtonUI();
-  loadCoinData(currentCoin);
-  loadAllCryptosData();
-  fetchTickerCategoryData(currentTickerCategory);
-  fetchMarketRadar();
-  runMarketScan(false);
-  syncBotStatus();
   updateLiquidationEstimate();
-  pollAlerts();
 
-  // Auto-refresh main chart and futures statistics every 10 seconds
+  // 1. Immediate: Load core bot status & selected coin chart
+  syncBotStatus();
+  loadCoinData(currentCoin);
+
+  // 2. Staggered: Load supplementary data smoothly without backend traffic jams
+  setTimeout(() => fetchTickerCategoryData(currentTickerCategory), 800);
+  setTimeout(() => loadAllCryptosData(), 1600);
+  setTimeout(() => fetchMarketRadar(), 2400);
+  setTimeout(() => pollAlerts(), 3500);
+  setTimeout(() => runMarketScan(false), 5500);
+
+  // Auto-refresh main chart and futures statistics every 15 seconds
   setInterval(() => {
     loadCoinData(currentCoin, true);
     syncBotStatus();
-  }, 10000);
+  }, 15000);
 
-  // Periodic alert polling every 12 seconds
+  // Periodic alert polling every 20 seconds
   setInterval(() => {
     pollAlerts();
-  }, 12000);
+  }, 20000);
 
-  // Periodic scanner auto-refresh every 45 seconds
+  // Periodic scanner auto-refresh every 60 seconds
   setInterval(() => {
     runMarketScan(false);
-  }, 45000);
+  }, 60000);
 
-  // Periodic market radar refresh every 40 seconds
+  // Periodic market radar refresh every 45 seconds
   setInterval(() => {
     fetchMarketRadar();
-  }, 40000);
+  }, 45000);
 
   // Close search dropdown when clicking outside
   document.addEventListener("click", (e) => {
@@ -537,38 +541,45 @@ async function loadCoinData(coin, isSilent = false) {
 
     // 1. Fetch Futures Analysis & Structure
     const resAnalysis = await fetch(`/api/analyze?coin=${coin}&interval=${currentInterval}`);
-    const analysis = await resAnalysis.json();
-    if (analysis && analysis.price) {
-      updateUIWithAnalysis(analysis);
+    if (resAnalysis.ok) {
+      const analysis = await resAnalysis.json();
+      if (analysis && analysis.price) {
+        updateUIWithAnalysis(analysis);
+      }
     }
 
     // 2. Fetch Futures Live Stats (Funding Rate, Mark Price)
     const resStats = await fetch(`/api/futures_stats?coin=${coin}`);
-    const stats = await resStats.json();
-    if (stats && stats.symbol) {
-      activeFuturesStats = stats;
-      updateFuturesStatsUI(stats);
+    if (resStats.ok) {
+      const stats = await resStats.json();
+      if (stats && stats.symbol) {
+        activeFuturesStats = stats;
+        updateFuturesStatsUI(stats);
+      }
     }
 
     // 3. Fetch 10-Step Forward Predictive Forecast
     const resPredict = await fetch(`/api/predict?coin=${coin}&interval=${currentInterval}&steps=10`);
-    const prediction = await resPredict.json();
-    if (prediction && prediction.direction) {
-      activePrediction = prediction;
-      updatePredictiveUI(prediction);
+    if (resPredict.ok) {
+      const prediction = await resPredict.json();
+      if (prediction && prediction.direction) {
+        activePrediction = prediction;
+        updatePredictiveUI(prediction);
+      }
     }
 
     // 4. Fetch Real Perpetual Futures Candlesticks (Long 90-candle depth)
     const pair = `B-${coin}_USDT`;
     const resCandles = await fetch(`/api/candles?pair=${pair}&interval=${currentInterval}&limit=90`);
-    const candleData = await resCandles.json();
+    if (resCandles.ok) {
+      const candleData = await resCandles.json();
+      if (Array.isArray(candleData) && candleData.length > 0) {
+        activeCandles = [...candleData].reverse(); // Chronological oldest to newest
 
-    if (Array.isArray(candleData) && candleData.length > 0) {
-      activeCandles = [...candleData].reverse(); // Chronological oldest to newest
-
-      if (chartMode === "ai") {
-        renderCandlestickChart(activeCandles, activePrediction);
-        resetHudToLatest();
+        if (chartMode === "ai") {
+          renderCandlestickChart(activeCandles, activePrediction);
+          resetHudToLatest();
+        }
       }
     }
 
@@ -865,6 +876,7 @@ async function fetchTickerCategoryData(cat = "gainers") {
     else url += "&sort=volume";
 
     const res = await fetch(url);
+    if (!res.ok) return;
     const data = await res.json();
     const coins = data.coins || [];
 
@@ -900,6 +912,7 @@ async function fetchMarketRadar() {
 
   try {
     const res = await fetch("/api/market_radar");
+    if (!res.ok) return;
     const data = await res.json();
 
     if (data.bullish && data.bullish.length > 0) {
@@ -939,6 +952,7 @@ async function fetchMarketRadar() {
 async function syncBotStatus() {
   try {
     const res = await fetch("/api/status");
+    if (!res.ok) return;
     const data = await res.json();
 
     isBotRunning = data.is_running;
@@ -1045,6 +1059,7 @@ function simulateTrade(side) {
 async function toggleTradingMode() {
   try {
     const statusRes = await fetch("/api/status");
+    if (!statusRes.ok) return;
     const status = await statusRes.json();
     const willBeLive = status.dry_run;
 
@@ -1054,6 +1069,7 @@ async function toggleTradingMode() {
     }
 
     const res = await fetch("/api/bot/toggle_mode", { method: "POST" });
+    if (!res.ok) return;
     const data = await res.json();
     alert(`Trading mode switched to: ${data.mode} TRADING!`);
     syncBotStatus();
@@ -1070,6 +1086,10 @@ async function setRiskProfile(mode) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode })
     });
+    if (!res.ok) {
+      console.warn("Risk mode server update in progress, will sync momentarily...");
+      return;
+    }
     const data = await res.json();
     if (data.status === "success") {
       updateRiskProfileUI(data.current_mode, data.profile);
@@ -1132,6 +1152,7 @@ function updateRiskProfileUI(currentMode, profile) {
 async function fetchAdvisorData(coin) {
   try {
     const res = await fetch(`/api/advisor?coin=${coin}`);
+    if (!res.ok) return;
     const data = await res.json();
     if (data && data.coin) {
       advisorData = data;
@@ -1469,6 +1490,7 @@ function updateSoundButtonUI() {
 async function loadAllCryptosData(silent = false) {
   try {
     const res = await fetch("/api/all_coins?limit=1000");
+    if (!res.ok) return;
     const data = await res.json();
     if (data && data.coins) {
       allCryptosList = data.coins;
@@ -1698,6 +1720,10 @@ async function runMarketScan(userTriggered = false) {
 
   try {
     const res = await fetch("/api/scan_all?min_conf=70&limit=35");
+    if (!res.ok) {
+      if (summaryEl) summaryEl.textContent = "Scanner updating in background, will sync shortly...";
+      return;
+    }
     const data = await res.json();
     const signals = data.signals || [];
     scannerResults = signals;
@@ -1838,6 +1864,7 @@ function renderScannerCards(items) {
 async function pollAlerts() {
   try {
     const res = await fetch(`/api/alerts?since=${lastAlertTimestamp}`);
+    if (!res.ok) return;
     const data = await res.json();
 
     if (data) {
