@@ -96,8 +96,8 @@ def calculate_trade_performance(trades):
         "is_profitable": total_pnl > 0
     }
 
-def record_paper_trade(trade_entry):
-    """Append a trade to disk and update performance metrics."""
+def record_paper_trade(trade_entry, active_pos="UNCHANGED"):
+    """Append a trade to disk, track active position, and update performance metrics."""
     try:
         data = load_paper_trades()
         trades = data.get("trades", [])
@@ -106,7 +106,8 @@ def record_paper_trade(trade_entry):
         payload = {
             "updated_at": datetime.now().isoformat(),
             "summary": summary,
-            "trades": trades[:500]
+            "trades": trades[:500],
+            "active_position": active_pos if active_pos != "UNCHANGED" else data.get("active_position", None)
         }
         with open(TRADES_FILE, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
@@ -115,6 +116,17 @@ def record_paper_trade(trade_entry):
         print(f"[Error saving {TRADES_FILE}]: {e}")
         return {}
 
+def save_active_position(pos):
+    """Persist active position state directly to disk so reboots don't orphan open trades."""
+    try:
+        data = load_paper_trades()
+        data["active_position"] = pos
+        data["updated_at"] = datetime.now().isoformat()
+        with open(TRADES_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"[Error saving active position to {TRADES_FILE}]: {e}")
+
 
 # Shared Bot State with Active Live Trade & Predictive Forecasts
 now_str = datetime.now().strftime("%H:%M:%S")
@@ -122,7 +134,7 @@ initial_paper_data = load_paper_trades()
 bot_state = {
     "is_running": False,  # HALTED BY DEFAULT FOR SAFETY
     "paper_balance": 1500.0,
-    "active_position": None,  # CLEAN: NO OPEN POSITION
+    "active_position": initial_paper_data.get("active_position", None),
     "selected_coin": "BTC",
     "selected_pair": "B-BTC_USDT",
     "trade_history": initial_paper_data.get("trades", []),
@@ -347,7 +359,7 @@ def bot_worker():
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         }
                         bot_state["trade_history"].insert(0, trade_rec)
-                        record_paper_trade(trade_rec)
+                        record_paper_trade(trade_rec, active_pos=bot_state["active_position"])
                     else:
                         bot_state["last_signal"] = f"MACRO: {auto_mode} ({preferred_dir} TP ±{dyn_tp_pct}%)"
                         bot_state["last_reason"] = f"{regime_desc} Scanning {preferred_dir} setups (min {dyn_min_conf}% conf)..."
@@ -484,10 +496,10 @@ def bot_worker():
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         }
                         bot_state["trade_history"].insert(0, exit_rec)
-                        record_paper_trade(exit_rec)
+                        bot_state["active_position"] = None
+                        record_paper_trade(exit_rec, active_pos=None)
                         recent_coins[pos["symbol"]] = time.time() + 7200  # 2 hours cooldown on this coin
                         cooldown_until = time.time() + 600  # 10 min cooldown before scanning next coin
-                        bot_state["active_position"] = None
                     else:
                         bot_state["last_reason"] = f"Monitoring {pos_dir} {pos['symbol']}: Target ${pos.get('target')}, Live PnL: {pnl_pct:+.1f}% (₹{pnl:+.2f})"
 
@@ -1127,7 +1139,7 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
             bot_state["trade_history"].insert(0, trade_rec)
-            record_paper_trade(trade_rec)
+            record_paper_trade(trade_rec, active_pos=bot_state["active_position"])
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -1186,8 +1198,8 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
             bot_state["trade_history"].insert(0, close_rec)
-            record_paper_trade(close_rec)
             bot_state["active_position"] = None
+            record_paper_trade(close_rec, active_pos=None)
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

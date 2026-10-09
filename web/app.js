@@ -1174,8 +1174,8 @@ function renderTradeLogList() {
     const typeLabel = t.type === "BUY_COVER" ? "BUY COVER" : (t.type === "SELL_SHORT" ? "SELL SHORT" : t.type);
 
     // Extract TP & SL
-    let tpText = t.target ? `$${formatPrice(t.target)}` : "";
-    let slText = t.stop_loss ? `$${formatPrice(t.stop_loss)}` : "";
+    let tpText = t.target ? formatPrice(t.target) : "";
+    let slText = t.stop_loss ? formatPrice(t.stop_loss) : "";
     if (!tpText && t.note) {
       const m = t.note.match(/Target\s+(\$[\d\.]+)/i);
       if (m) tpText = m[1];
