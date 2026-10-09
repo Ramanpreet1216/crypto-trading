@@ -1038,9 +1038,10 @@ async function syncBotStatus() {
 
     if (data.active_position) {
       const pos = data.active_position;
-      elPosBadge.textContent = `ACTIVE [${pos.symbol}]`;
-      elPosBadge.style.color = "#10b981";
-      elPosDetails.innerHTML = `Bought <b>${pos.quantity.toFixed(4)} ${pos.symbol}</b> @ ${formatPrice(pos.buy_price)}<br>Target: <b>${formatPrice(pos.target)}</b> | Stop: <b>${formatPrice(pos.stop_loss)}</b>`;
+      const isShort = pos.direction === "SHORT";
+      elPosBadge.textContent = `ACTIVE ${isShort ? 'SHORT' : 'LONG'} [${pos.symbol}]`;
+      elPosBadge.style.color = isShort ? "#ef4444" : "#10b981";
+      elPosDetails.innerHTML = `${isShort ? 'Shorted' : 'Bought'} <b>${pos.quantity.toFixed(4)} ${pos.symbol}</b> @ ${formatPrice(pos.buy_price)}<br>Target: <b>${formatPrice(pos.target)}</b> | Stop: <b>${formatPrice(pos.stop_loss)}</b>`;
     } else {
       elPosBadge.textContent = "NO ACTIVE TRADE (FUTURES WALLET)";
       elPosBadge.style.color = "#94a3b8";
