@@ -1068,6 +1068,7 @@ async function syncBotStatus() {
 // Global Paper Trade State
 let allTradeHistory = [];
 let activeTradeFilter = "ALL";
+let activeDirectionFilter = "ALL";
 let lastRenderedTradesHash = "";
 
 function updateTradePerformanceHUD(summary) {
@@ -1113,6 +1114,11 @@ function filterTradeHistoryTab(tab) {
   renderTradeLogList();
 }
 
+function filterTradeDirection(dir) {
+  activeDirectionFilter = (dir || "ALL").toUpperCase();
+  renderTradeLogList();
+}
+
 function renderTradeLogList() {
   if (!elTradeLogList) return;
 
@@ -1123,19 +1129,38 @@ function renderTradeLogList() {
   }
 
   let filtered = allTradeHistory;
+
+  // 1. Filter by Result (WINS vs LOSSES)
   if (activeTradeFilter === "WINS") {
-    filtered = allTradeHistory.filter(t => t.type === "SELL" && Number(t.pnl || t.pnl_inr || 0) > 0);
+    filtered = filtered.filter(t => {
+      const isExit = t.type === "SELL" || t.type === "BUY_COVER" || (t.pnl !== undefined && t.pnl !== null);
+      return isExit && Number(t.pnl || t.pnl_inr || 0) > 0;
+    });
   } else if (activeTradeFilter === "LOSSES") {
-    filtered = allTradeHistory.filter(t => t.type === "SELL" && Number(t.pnl || t.pnl_inr || 0) < 0);
+    filtered = filtered.filter(t => {
+      const isExit = t.type === "SELL" || t.type === "BUY_COVER" || (t.pnl !== undefined && t.pnl !== null);
+      return isExit && Number(t.pnl || t.pnl_inr || 0) < 0;
+    });
+  }
+
+  // 2. Filter by Direction (LONG vs SHORT)
+  if (activeDirectionFilter !== "ALL") {
+    filtered = filtered.filter(t => {
+      const dir = (t.direction || (t.type === "SELL_SHORT" || t.type === "BUY_COVER" ? "SHORT" : "LONG")).toUpperCase();
+      return dir === activeDirectionFilter;
+    });
   }
 
   if (!filtered || filtered.length === 0) {
-    elTradeLogList.innerHTML = `<div class="empty-trades">No ${activeTradeFilter !== 'ALL' ? activeTradeFilter.toLowerCase() : 'executions'} recorded yet.</div>`;
+    elTradeLogList.innerHTML = `<div class="empty-trades">No ${activeTradeFilter !== 'ALL' ? activeTradeFilter.toLowerCase() : ''} ${activeDirectionFilter !== 'ALL' ? activeDirectionFilter.toLowerCase() + ' ' : ''}executions recorded yet.</div>`;
     return;
   }
 
   elTradeLogList.innerHTML = filtered.map(t => {
-    const isSell = t.type === "SELL";
+    const isExit = t.type === "SELL" || t.type === "BUY_COVER" || (t.pnl !== undefined && t.pnl !== null);
+    const dir = (t.direction || (t.type === "SELL_SHORT" || t.type === "BUY_COVER" ? "SHORT" : "LONG")).toUpperCase();
+    const isShort = dir === "SHORT";
+    const lev = t.leverage ? `${t.leverage}x` : (t.note && t.note.includes("x") ? t.note.match(/(\d+)x/)?.[0] : "4x");
     const pnlVal = t.pnl !== undefined ? Number(t.pnl) : (t.pnl_inr !== undefined ? Number(t.pnl_inr) : null);
     const pnlPct = t.pnl_pct !== undefined ? Number(t.pnl_pct) : null;
     const isWin = pnlVal !== null && pnlVal > 0;
@@ -1145,17 +1170,52 @@ function renderTradeLogList() {
     if (isWin) pnlColor = "#10b981";
     if (isLoss) pnlColor = "#ef4444";
 
+    const badgeClass = isShort ? "badge-short" : "badge-long";
+    const typeLabel = t.type === "BUY_COVER" ? "BUY COVER" : (t.type === "SELL_SHORT" ? "SELL SHORT" : t.type);
+
+    // Extract TP & SL
+    let tpText = t.target ? `$${formatPrice(t.target)}` : "";
+    let slText = t.stop_loss ? `$${formatPrice(t.stop_loss)}` : "";
+    if (!tpText && t.note) {
+      const m = t.note.match(/Target\s+(\$[\d\.]+)/i);
+      if (m) tpText = m[1];
+    }
+    if (!slText && t.note) {
+      const m = t.note.match(/SL\s+(\$[\d\.]+)/i);
+      if (m) slText = m[1];
+    }
+
+    let reasonText = t.reason || t.note || "";
+
     return `
-      <div class="trade-log-item" title="${t.reason || t.note || ''}">
-        <div>
-          <span class="trade-log-type ${t.type}">${t.type}</span>
-          <span style="margin-left: 6px; font-weight: 600;">${t.coin}</span>
+      <div class="trade-log-card ${isExit ? (isWin ? 'card-win' : 'card-loss') : 'card-entry'}">
+        <div class="trade-card-top">
+          <div class="trade-card-id">
+            <span class="trade-badge-dir ${badgeClass}">${dir}</span>
+            <span class="trade-badge-type">${typeLabel}</span>
+            <span class="trade-card-coin">${t.coin}</span>
+            ${lev ? `<span class="trade-badge-lev">${lev}</span>` : ''}
+          </div>
+          <div class="trade-card-time">${t.time || ''}</div>
         </div>
-        <div style="font-family: var(--font-mono);">${formatPrice(t.price)}</div>
-        <div style="color: ${pnlColor}; font-weight: 700; font-family: var(--font-mono);">
-          ${pnlVal !== null ? `INR ${pnlVal >= 0 ? '+' : ''}${pnlVal.toFixed(2)}${pnlPct !== null ? ` (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)` : ''}` : `INR ${Number(t.amount || 0).toFixed(2)}`}
+
+        <div class="trade-card-middle">
+          <div class="trade-card-price">
+            <span class="price-val">${formatPrice(t.price)}</span>
+            ${t.entry_price && Number(t.entry_price) !== Number(t.price) ? `<span class="entry-sub">from ${formatPrice(t.entry_price)}</span>` : ''}
+          </div>
+          <div class="trade-card-pnl" style="color: ${pnlColor};">
+            ${pnlVal !== null ? `INR ${pnlVal >= 0 ? '+' : ''}${pnlVal.toFixed(2)}${pnlPct !== null ? ` (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)` : ''}` : `₹${Number(t.amount || 0).toFixed(2)} Margin`}
+          </div>
         </div>
-        <div style="color: #64748b; font-size: 0.7rem;">${t.time || ''}</div>
+
+        ${(tpText || slText || reasonText) ? `
+          <div class="trade-card-bottom">
+            ${tpText ? `<span class="pill-tp">TP: <b>${tpText}</b></span>` : ''}
+            ${slText ? `<span class="pill-sl">SL: <b>${slText}</b></span>` : ''}
+            ${reasonText ? `<span class="pill-reason" title="${reasonText}">${reasonText}</span>` : ''}
+          </div>
+        ` : ''}
       </div>
     `;
   }).join("");

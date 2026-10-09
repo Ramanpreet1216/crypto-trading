@@ -795,6 +795,15 @@
                 <button type="button" class="trade-tab-btn" id="tab-trade-losses" onclick="filterTradeHistoryTab('LOSSES')">Losses</button>
               </div>
 
+              <!-- Direction Dropdown Filter -->
+              <div class="trade-dir-filter-wrap">
+                <select id="trade-dir-filter" class="trade-dir-select" onchange="filterTradeDirection(this.value)">
+                  <option value="ALL">All Sides (Long & Short)</option>
+                  <option value="LONG">🟢 Longs Only</option>
+                  <option value="SHORT">🔴 Shorts Only</option>
+                </select>
+              </div>
+
               <div class="trade-btn-tools">
                 <button type="button" class="tool-action-btn" onclick="copyTradeHistoryToClipboard()" title="Copy all trade executions to clipboard">
                   📋 Copy

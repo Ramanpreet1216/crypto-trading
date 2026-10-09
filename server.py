@@ -78,7 +78,7 @@ def _extract_pnl(t):
 
 def calculate_trade_performance(trades):
     """Calculate Net PnL, Win Rate %, Total Wins, Total Losses, and Volume."""
-    completed = [t for t in trades if t.get("type") == "SELL"]
+    completed = [t for t in trades if t.get("type") in ["SELL", "BUY_COVER"] or t.get("pnl") is not None]
     wins = [t for t in completed if _extract_pnl(t) > 0]
     losses = [t for t in completed if _extract_pnl(t) < 0]
     total_pnl = sum(_extract_pnl(t) for t in completed)
@@ -337,6 +337,10 @@ def bot_worker():
                             "coin": coin,
                             "direction": pos_dir,
                             "price": live_price,
+                            "entry_price": live_price,
+                            "target": target_price,
+                            "stop_loss": stop_loss,
+                            "leverage": dyn_lev,
                             "amount": spend,
                             "note": f"Auto-{auto_mode} ({prob}% {pos_dir}): Target ${target_price}, SL ${stop_loss}",
                             "time": datetime.now().strftime("%H:%M:%S"),
@@ -468,6 +472,10 @@ def bot_worker():
                             "coin": pos["symbol"],
                             "direction": pos_dir,
                             "price": current_price,
+                            "entry_price": pos.get("buy_price", current_price),
+                            "target": pos.get("target"),
+                            "stop_loss": pos.get("stop_loss"),
+                            "leverage": pos_lev,
                             "amount": round(proceeds, 2),
                             "pnl": round(pnl, 2),
                             "pnl_pct": round(pnl_pct, 2),
