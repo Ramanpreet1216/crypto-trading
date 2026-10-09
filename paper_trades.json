@@ -6,9 +6,10 @@
     "wins": 3,
     "losses": 3,
     "win_rate_pct": 50.0,
-    "total_pnl_inr": 16.37,
+    "total_pnl_inr": 12.23,
     "total_volume_inr": 2015.52,
-    "is_profitable": true
+    "is_profitable": true,
+    "total_fees_inr": 4.14
   },
   "trades": [
     {
@@ -35,11 +36,13 @@
       "stop_loss": 0.072383,
       "leverage": 6,
       "amount": 167.2,
-      "pnl": 17.25,
-      "pnl_pct": 11.5,
-      "reason": "Breakeven Profit Lock at $0.0750 (PnL: +11.5%, \u20b9+17.25)",
+      "pnl": 16.2,
+      "pnl_pct": 9.69,
+      "reason": "Breakeven Profit Lock at $0.0750 (PnL: +11.5%, \u20b9+17.25) (Fee: -\u20b91.05)",
       "time": "21:25:08",
-      "timestamp": "2026-10-09 21:25:08"
+      "timestamp": "2026-10-09 21:25:08",
+      "fee": 1.05,
+      "gross_pnl": 17.25
     },
     {
       "type": "BUY",
@@ -61,11 +64,13 @@
       "direction": "SHORT",
       "price": 0.03639,
       "amount": 172.5,
-      "pnl": 17.54,
-      "pnl_pct": 11.32,
-      "reason": "Target Hit ($0.036401)! (PnL: +11.3%, \u20b9+17.54)",
+      "pnl": 16.81,
+      "pnl_pct": 9.74,
+      "reason": "Target Hit ($0.036401)! (PnL: +11.3%, \u20b9+17.54) (Fee: -\u20b90.73)",
       "time": "20:45:24",
-      "timestamp": "2026-10-09 20:45:24"
+      "timestamp": "2026-10-09 20:45:24",
+      "fee": 0.73,
+      "gross_pnl": 17.54
     },
     {
       "type": "SELL_SHORT",
@@ -82,11 +87,13 @@
       "coin": "PYTH",
       "price": 0.08575,
       "amount": 155.66,
-      "pnl": 0.72,
-      "pnl_pct": 0.47,
-      "reason": "Breakeven/Trailed Profit Lock at $0.0860 (PnL: +0.5%, \u20b9+0.72)",
+      "pnl": 0.1,
+      "pnl_pct": 0.06,
+      "reason": "Breakeven/Trailed Profit Lock at $0.0860 (PnL: +0.5%, \u20b9+0.72) (Fee: -\u20b90.62)",
       "time": "20:03:19",
-      "timestamp": "2026-10-09 20:03:19"
+      "timestamp": "2026-10-09 20:03:19",
+      "fee": 0.62,
+      "gross_pnl": 0.72
     },
     {
       "type": "BUY",
@@ -102,11 +109,13 @@
       "coin": "STRK",
       "price": 0.07111,
       "amount": 148.64,
-      "pnl": -6.39,
-      "pnl_pct": -4.12,
-      "reason": "Stop-Loss Protection at $0.0711 (PnL: -4.1%, \u20b9-6.39)",
+      "pnl": -6.97,
+      "pnl_pct": -4.69,
+      "reason": "Stop-Loss Protection at $0.0711 (PnL: -4.1%, \u20b9-6.39) (Fee: -\u20b90.58)",
       "time": "19:31:57",
-      "timestamp": "2026-10-09 19:31:57"
+      "timestamp": "2026-10-09 19:31:57",
+      "fee": 0.58,
+      "gross_pnl": -6.39
     },
     {
       "type": "BUY",
@@ -122,11 +131,13 @@
       "coin": "ETH",
       "price": 2480.89,
       "amount": 148.65,
-      "pnl": -6.47,
-      "pnl_pct": -4.17,
-      "reason": "Stop-Loss Protection at $2481.9600 (PnL: -4.2%, \u20b9-6.47)",
+      "pnl": -7.05,
+      "pnl_pct": -4.74,
+      "reason": "Stop-Loss Protection at $2481.9600 (PnL: -4.2%, \u20b9-6.47) (Fee: -\u20b90.58)",
       "time": "19:06:45",
-      "timestamp": "2026-10-09 19:06:45"
+      "timestamp": "2026-10-09 19:06:45",
+      "fee": 0.58,
+      "gross_pnl": -6.47
     },
     {
       "type": "BUY",
@@ -142,11 +153,13 @@
       "coin": "PYTH",
       "price": 0.08409,
       "amount": 148.73,
-      "pnl": -6.28,
-      "pnl_pct": -4.05,
-      "reason": "Stop-Loss Protection at $0.0841 (PnL: -4.0%, \u20b9-6.28)",
+      "pnl": -6.86,
+      "pnl_pct": -4.61,
+      "reason": "Stop-Loss Protection at $0.0841 (PnL: -4.0%, \u20b9-6.28) (Fee: -\u20b90.58)",
       "time": "17:33:05",
-      "timestamp": "2026-10-09 17:33:05"
+      "timestamp": "2026-10-09 17:33:05",
+      "fee": 0.58,
+      "gross_pnl": -6.28
     },
     {
       "type": "BUY",

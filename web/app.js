@@ -1212,10 +1212,11 @@ function renderTradeLogList() {
           </div>
         </div>
 
-        ${(tpText || slText || reasonText) ? `
+        ${(tpText || slText || reasonText || t.fee) ? `
           <div class="trade-card-bottom">
             ${tpText ? `<span class="pill-tp">TP: <b>${tpText}</b></span>` : ''}
             ${slText ? `<span class="pill-sl">SL: <b>${slText}</b></span>` : ''}
+            ${t.fee ? `<span class="pill-fee" title="CoinDCX Futures Taker Fee Deducted">Fee: -₹${Number(t.fee).toFixed(2)}</span>` : ''}
             ${reasonText ? `<span class="pill-reason" title="${reasonText}">${reasonText}</span>` : ''}
           </div>
         ` : ''}

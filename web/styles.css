@@ -3567,6 +3567,15 @@ body {
   border-radius: 3px;
 }
 
+.pill-fee {
+  color: #fb923c;
+  background: rgba(249, 115, 22, 0.1);
+  border: 1px solid rgba(249, 115, 22, 0.2);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
 .pill-reason {
   color: #94a3b8;
   overflow: hidden;

@@ -76,12 +76,31 @@ def _extract_pnl(t):
             pass
     return 0.0
 
+def calculate_trade_fee(invested_inr, leverage, gross_pnl_inr, fee_mode=None):
+    """
+    Calculate realistic exchange fees for a completed trade.
+    - 'COINDCX' (default): Official CoinDCX Futures taker fee = 0.05% on entry notional + 0.05% on exit notional.
+    - 'FLAT_1PCT': Flat 1.0% safety cut on margin (covers TDS / slippage buffer).
+    """
+    mode = fee_mode or getattr(config, "FEE_MODE", "COINDCX")
+    if mode == "FLAT_1PCT":
+        return round(float(invested_inr) * 0.01, 2)
+    else:
+        lev = max(1.0, float(leverage))
+        entry_notional = float(invested_inr) * lev
+        exit_notional = max(0.0, (float(invested_inr) + float(gross_pnl_inr)) * lev)
+        fee_rate = getattr(config, "FEE_TAKER_PCT", 0.05) / 100.0
+        fee_open = entry_notional * fee_rate
+        fee_close = exit_notional * fee_rate
+        return round(fee_open + fee_close, 2)
+
 def calculate_trade_performance(trades):
-    """Calculate Net PnL, Win Rate %, Total Wins, Total Losses, and Volume."""
+    """Calculate Net PnL, Win Rate %, Total Wins, Total Losses, Fees, and Volume."""
     completed = [t for t in trades if t.get("type") in ["SELL", "BUY_COVER"] or t.get("pnl") is not None]
     wins = [t for t in completed if _extract_pnl(t) > 0]
     losses = [t for t in completed if _extract_pnl(t) < 0]
     total_pnl = sum(_extract_pnl(t) for t in completed)
+    total_fees = sum(float(t.get("fee", 0) or 0) for t in completed)
     total_volume = sum(float(t.get("amount") if t.get("amount") is not None else t.get("invested_inr", 0) or 0) for t in trades)
     win_rate = round((len(wins) / len(completed)) * 100.0, 1) if completed else 0.0
 
@@ -92,6 +111,7 @@ def calculate_trade_performance(trades):
         "losses": len(losses),
         "win_rate_pct": win_rate,
         "total_pnl_inr": round(total_pnl, 2),
+        "total_fees_inr": round(total_fees, 2),
         "total_volume_inr": round(total_volume, 2),
         "is_profitable": total_pnl > 0
     }
@@ -461,12 +481,16 @@ def bot_worker():
                             exit_trigger = f"{lbl} at ${active_sl:.4f}"
                         exit_side = "buy"
 
-                    pnl_pct = gain_pct * pos_lev
-                    pnl = pos["invested"] * (pnl_pct / 100.0)
+                    gross_pnl_pct = gain_pct * pos_lev
+                    gross_pnl = pos["invested"] * (gross_pnl_pct / 100.0)
+
+                    trade_fee = calculate_trade_fee(pos["invested"], pos_lev, gross_pnl)
+                    net_pnl = round(gross_pnl - trade_fee, 2)
+                    net_pnl_pct = round((net_pnl / max(1e-6, pos["invested"])) * 100.0, 2)
 
                     if exit_trigger:
-                        proceeds = pos["invested"] + pnl
-                        bot_state["paper_balance"] += proceeds
+                        proceeds = round(pos["invested"] + net_pnl, 2)
+                        bot_state["paper_balance"] = round(bot_state["paper_balance"] + proceeds, 2)
 
                         # Execute exit order on CoinDCX if live trading
                         if not config.DRY_RUN:
@@ -476,7 +500,8 @@ def bot_worker():
                             except Exception as live_err:
                                 print(f"[LIVE AUTONOMOUS EXIT ERROR]: {live_err}")
 
-                        full_reason = f"{exit_trigger} (PnL: {pnl_pct:+.1f}%, ₹{pnl:+.2f})"
+                        fee_desc = f"after ₹{trade_fee:.2f} fee" if trade_fee > 0 else ""
+                        full_reason = f"{exit_trigger} (Net PnL: {net_pnl_pct:+.1f}%, ₹{net_pnl:+.2f}{' ' + fee_desc if fee_desc else ''})"
                         bot_state["last_signal"] = f"EXIT [{pos_dir} {pos['symbol']}]"
                         bot_state["last_reason"] = full_reason
                         exit_rec = {
@@ -489,8 +514,10 @@ def bot_worker():
                             "stop_loss": pos.get("stop_loss"),
                             "leverage": pos_lev,
                             "amount": round(proceeds, 2),
-                            "pnl": round(pnl, 2),
-                            "pnl_pct": round(pnl_pct, 2),
+                            "gross_pnl": round(gross_pnl, 2),
+                            "fee": trade_fee,
+                            "pnl": net_pnl,
+                            "pnl_pct": net_pnl_pct,
                             "reason": full_reason,
                             "time": datetime.now().strftime("%H:%M:%S"),
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -501,7 +528,7 @@ def bot_worker():
                         recent_coins[pos["symbol"]] = time.time() + 7200  # 2 hours cooldown on this coin
                         cooldown_until = time.time() + 600  # 10 min cooldown before scanning next coin
                     else:
-                        bot_state["last_reason"] = f"Monitoring {pos_dir} {pos['symbol']}: Target ${pos.get('target')}, Live PnL: {pnl_pct:+.1f}% (₹{pnl:+.2f})"
+                        bot_state["last_reason"] = f"Monitoring {pos_dir} {pos['symbol']}: Target ${pos.get('target')}, Live Net PnL: {net_pnl_pct:+.1f}% (₹{net_pnl:+.2f}, fee ₹{trade_fee:.2f})"
 
             except Exception as e:
                 print(f"[Autonomous Worker Error] {e}")
@@ -1169,12 +1196,15 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
             side = pos.get("side", "LONG")
 
             if side == "LONG":
-                pnl_pct = ((curr_price - pos["buy_price"]) / max(1e-6, pos["buy_price"])) * 100.0 * lev
+                gross_pnl_pct = ((curr_price - pos["buy_price"]) / max(1e-6, pos["buy_price"])) * 100.0 * lev
             else:
-                pnl_pct = ((pos["buy_price"] - curr_price) / max(1e-6, pos["buy_price"])) * 100.0 * lev
+                gross_pnl_pct = ((pos["buy_price"] - curr_price) / max(1e-6, pos["buy_price"])) * 100.0 * lev
 
-            pnl_inr = round(pos["invested"] * (pnl_pct / 100.0), 2)
-            proceeds = round(pos["invested"] + pnl_inr, 2)
+            gross_pnl = pos["invested"] * (gross_pnl_pct / 100.0)
+            trade_fee = calculate_trade_fee(pos["invested"], lev, gross_pnl)
+            net_pnl = round(gross_pnl - trade_fee, 2)
+            net_pnl_pct = round((net_pnl / max(1e-6, pos["invested"])) * 100.0, 2)
+            proceeds = round(pos["invested"] + net_pnl, 2)
             bot_state["paper_balance"] = round(bot_state["paper_balance"] + proceeds, 2)
 
             if not config.DRY_RUN:
@@ -1184,16 +1214,19 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
                 except Exception as live_err:
                     print(f"[LIVE MANUAL CLOSE ERROR]: {live_err}")
 
+            fee_desc = f"after ₹{trade_fee:.2f} fee" if trade_fee > 0 else ""
             bot_state["last_signal"] = f"MANUAL EXIT [{pos['symbol']}]"
-            bot_state["last_reason"] = f"Closed {pos['symbol']} at ${curr_price:.4f} (PnL: {pnl_pct:+.1f}%, INR {pnl_inr:+.2f})"
+            bot_state["last_reason"] = f"Closed {pos['symbol']} at ${curr_price:.4f} (Net PnL: {net_pnl_pct:+.1f}%, INR {net_pnl:+.2f}{' ' + fee_desc if fee_desc else ''})"
             close_rec = {
                 "type": "SELL",
                 "coin": pos["symbol"],
                 "price": curr_price,
                 "amount": proceeds,
-                "pnl": pnl_inr,
-                "pnl_pct": round(pnl_pct, 2),
-                "reason": "Manual Close Button",
+                "gross_pnl": round(gross_pnl, 2),
+                "fee": trade_fee,
+                "pnl": net_pnl,
+                "pnl_pct": net_pnl_pct,
+                "reason": f"Manual Close Button (Net PnL: {net_pnl_pct:+.1f}%, ₹{net_pnl:+.2f}{' ' + fee_desc if fee_desc else ''})",
                 "time": datetime.now().strftime("%H:%M:%S"),
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }

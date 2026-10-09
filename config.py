@@ -79,4 +79,11 @@ TAKE_PROFIT_PERCENT = RISK_PROFILES[CURRENT_RISK_MODE]["take_profit_pct"]
 COINDCX_API_KEY = os.getenv("COINDCX_API_KEY", "c590bc67e17800d3955ca0cf02b23b4c1a83d7360d7f1e6d")
 COINDCX_API_SECRET = os.getenv("COINDCX_API_SECRET", "3f86d69988e76ed689087544d5264ff5cadc72af03d623e66effca8ae28c78a2")
 
+# Realistic Exchange Fee Deduction
+# 'COINDCX': 0.05% taker fee on open + 0.05% taker fee on close (0.10% total on notional position)
+# 'FLAT_1PCT': 1.0% flat margin buffer (covers TDS / slippage)
+FEE_MODE = os.getenv("FEE_MODE", "COINDCX")
+FEE_TAKER_PCT = 0.05  # 0.05% per leg
+
+
 
