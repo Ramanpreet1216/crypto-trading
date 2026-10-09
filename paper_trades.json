@@ -1,90 +1,180 @@
 {
-  "balance_inr": 900.02,
-  "current_position": null,
+  "updated_at": "2026-10-09T21:35:12.551801",
+  "summary": {
+    "total_trades": 13,
+    "completed_trades": 6,
+    "wins": 3,
+    "losses": 3,
+    "win_rate_pct": 50.0,
+    "total_pnl_inr": 16.37,
+    "total_volume_inr": 2015.52,
+    "is_profitable": true
+  },
   "trades": [
     {
       "type": "BUY",
-      "time": "2026-09-29 20:08:31",
-      "price": 8425741.7,
-      "quantity": 1.186839136072733e-05,
-      "invested_inr": 100.0,
-      "metrics": {
-        "price": 8425741.7,
-        "ema_fast": 8415144.82675596,
-        "ema_slow": 8414717.638175828,
-        "rsi": 52.31548512478031
-      }
+      "coin": "BTC",
+      "direction": "LONG",
+      "price": 82848.0,
+      "entry_price": 82848.0,
+      "target": 86824.7,
+      "stop_loss": 81522.43,
+      "leverage": 6,
+      "amount": 149.13,
+      "note": "Auto-ALPHA (95% LONG): Target $86824.7, SL $81522.43",
+      "time": "21:35:12",
+      "timestamp": "2026-10-09 21:35:12"
     },
     {
       "type": "SELL",
-      "time": "2026-09-29 20:13:49",
-      "price": 8389040.8,
-      "proceeds_inr": 99.5644193555091,
-      "pnl_inr": -0.43558064449089784,
-      "pnl_pct": -0.43558064449089995,
-      "reason": "Bearish EMA crossover (Fast < Slow, RSI: 42.8)",
-      "metrics": {
-        "price": 8389040.8,
-        "ema_fast": 8414494.678850768,
-        "ema_slow": 8415032.819744617,
-        "rsi": 42.797777636595136
-      }
+      "coin": "STRK",
+      "direction": "LONG",
+      "price": 0.07497,
+      "entry_price": 0.07356,
+      "target": 0.077091,
+      "stop_loss": 0.072383,
+      "leverage": 6,
+      "amount": 167.2,
+      "pnl": 17.25,
+      "pnl_pct": 11.5,
+      "reason": "Breakeven Profit Lock at $0.0750 (PnL: +11.5%, \u20b9+17.25)",
+      "time": "21:25:08",
+      "timestamp": "2026-10-09 21:25:08"
     },
     {
       "type": "BUY",
-      "time": "2026-09-29 20:16:35",
-      "price": 8428662.1,
-      "quantity": 1.186427914816991e-05,
-      "invested_inr": 100.0,
-      "metrics": {
-        "price": 8428662.1,
-        "ema_fast": 8418935.798045311,
-        "ema_slow": 8418027.438093834,
-        "rsi": 52.58761731430891
-      }
+      "coin": "STRK",
+      "direction": "LONG",
+      "price": 0.07356,
+      "entry_price": 0.07356,
+      "target": 0.077091,
+      "stop_loss": 0.072383,
+      "leverage": 6,
+      "amount": 149.95,
+      "note": "Auto-ALPHA (92% LONG): Target $0.077091, SL $0.072383",
+      "time": "21:03:51",
+      "timestamp": "2026-10-09 21:03:51"
+    },
+    {
+      "type": "BUY_COVER",
+      "coin": "OGN",
+      "direction": "SHORT",
+      "price": 0.03639,
+      "amount": 172.5,
+      "pnl": 17.54,
+      "pnl_pct": 11.32,
+      "reason": "Target Hit ($0.036401)! (PnL: +11.3%, \u20b9+17.54)",
+      "time": "20:45:24",
+      "timestamp": "2026-10-09 20:45:24"
+    },
+    {
+      "type": "SELL_SHORT",
+      "coin": "OGN",
+      "direction": "SHORT",
+      "price": 0.03745,
+      "amount": 154.96,
+      "note": "Auto-SAFE (95% SHORT): Target $0.036401, SL $0.037899",
+      "time": "20:32:31",
+      "timestamp": "2026-10-09 20:32:31"
     },
     {
       "type": "SELL",
-      "time": "2026-09-29 20:18:21",
-      "price": 8383540.0,
-      "proceeds_inr": 99.46465880984837,
-      "pnl_inr": -0.5353411901516267,
-      "pnl_pct": -0.5353411901516331,
-      "reason": "Bearish EMA crossover (Fast < Slow, RSI: 42.2)",
-      "metrics": {
-        "price": 8383540.0,
-        "ema_fast": 8413817.62377299,
-        "ema_slow": 8415964.586730298,
-        "rsi": 42.1834703503756
-      }
+      "coin": "PYTH",
+      "price": 0.08575,
+      "amount": 155.66,
+      "pnl": 0.72,
+      "pnl_pct": 0.47,
+      "reason": "Breakeven/Trailed Profit Lock at $0.0860 (PnL: +0.5%, \u20b9+0.72)",
+      "time": "20:03:19",
+      "timestamp": "2026-10-09 20:03:19"
     },
     {
       "type": "BUY",
-      "time": "2026-09-29 20:27:11",
-      "price": 8424809.4,
-      "quantity": 1.1869704731836426e-05,
-      "invested_inr": 100.0,
-      "metrics": {
-        "price": 8424809.4,
-        "ema_fast": 8414642.302579926,
-        "ema_slow": 8413609.533500435,
-        "rsi": 52.489807075036495
-      }
+      "coin": "PYTH",
+      "price": 0.08565,
+      "amount": 154.94,
+      "note": "Auto-SAFE (95%): Target +2.5% ($0.087791), SL -1.0% ($0.084794)",
+      "time": "19:42:01",
+      "timestamp": "2026-10-09 19:42:01"
     },
     {
       "type": "SELL",
-      "time": "2026-09-30 20:16:17",
-      "price": 83546.4,
-      "proceeds_inr": 0.9916710994078987,
-      "pnl_inr": -99.0083289005921,
-      "pnl_pct": -99.0083289005921,
-      "reason": "Stop Loss triggered! Loss: -99.01%",
-      "metrics": {
-        "price": 83546.4,
-        "ema_fast": 83564.55907822623,
-        "ema_slow": 83643.75331846207,
-        "rsi": 41.075084863893636
-      }
+      "coin": "STRK",
+      "price": 0.07111,
+      "amount": 148.64,
+      "pnl": -6.39,
+      "pnl_pct": -4.12,
+      "reason": "Stop-Loss Protection at $0.0711 (PnL: -4.1%, \u20b9-6.39)",
+      "time": "19:31:57",
+      "timestamp": "2026-10-09 19:31:57"
+    },
+    {
+      "type": "BUY",
+      "coin": "STRK",
+      "price": 0.07185,
+      "amount": 155.03,
+      "note": "Auto-SAFE (95%): Target +2.5% ($0.073646), SL -1.0% ($0.071132)",
+      "time": "19:16:50",
+      "timestamp": "2026-10-09 19:16:50"
+    },
+    {
+      "type": "SELL",
+      "coin": "ETH",
+      "price": 2480.89,
+      "amount": 148.65,
+      "pnl": -6.47,
+      "pnl_pct": -4.17,
+      "reason": "Stop-Loss Protection at $2481.9600 (PnL: -4.2%, \u20b9-6.47)",
+      "time": "19:06:45",
+      "timestamp": "2026-10-09 19:06:45"
+    },
+    {
+      "type": "BUY",
+      "coin": "ETH",
+      "price": 2507.03,
+      "amount": 155.12,
+      "note": "Auto-SAFE (95%): Target +2.5% ($2569.71), SL -1.0% ($2481.96)",
+      "time": "17:43:10",
+      "timestamp": "2026-10-09 17:43:10"
+    },
+    {
+      "type": "SELL",
+      "coin": "PYTH",
+      "price": 0.08409,
+      "amount": 148.73,
+      "pnl": -6.28,
+      "pnl_pct": -4.05,
+      "reason": "Stop-Loss Protection at $0.0841 (PnL: -4.0%, \u20b9-6.28)",
+      "time": "17:33:05",
+      "timestamp": "2026-10-09 17:33:05"
+    },
+    {
+      "type": "BUY",
+      "coin": "PYTH",
+      "price": 0.08495,
+      "amount": 155.01,
+      "note": "Auto-SAFE (95%): Target +2.5% ($0.087074), SL -1.0% ($0.0841)",
+      "time": "17:19:31",
+      "timestamp": "2026-10-09 17:19:31"
     }
-  ]
+  ],
+  "active_position": {
+    "symbol": "BTC",
+    "pair": "B-BTC_USDT",
+    "direction": "LONG",
+    "buy_price": 82848.0,
+    "quantity": 0.00012,
+    "invested": 149.13,
+    "leverage": 6,
+    "target": 86824.7,
+    "stop_loss": 81522.43,
+    "trailing_stop": 81522.43,
+    "peak_price": 83014.77,
+    "valley_price": 82848.0,
+    "probability": 95,
+    "tp_pct": 4.8,
+    "sl_pct": 1.6,
+    "entry_time": 1791561912.5515068,
+    "time": "21:35:12"
+  }
 }

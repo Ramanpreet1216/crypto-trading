@@ -1187,13 +1187,16 @@ function renderTradeLogList() {
 
     let reasonText = t.reason || t.note || "";
 
+    const coinLabel = t.coin || t.symbol || (t.pair ? t.pair.replace('B-', '').replace('_USDT', '').replace('_INR', '') : 'BTC');
+    const marginVal = Number(t.amount !== undefined && t.amount !== null ? t.amount : (t.invested_inr || 0));
+
     return `
       <div class="trade-log-card ${isExit ? (isWin ? 'card-win' : 'card-loss') : 'card-entry'}">
         <div class="trade-card-top">
           <div class="trade-card-id">
             <span class="trade-badge-dir ${badgeClass}">${dir}</span>
             <span class="trade-badge-type">${typeLabel}</span>
-            <span class="trade-card-coin">${t.coin}</span>
+            <span class="trade-card-coin">${coinLabel}</span>
             ${lev ? `<span class="trade-badge-lev">${lev}</span>` : ''}
           </div>
           <div class="trade-card-time">${t.time || ''}</div>
@@ -1205,7 +1208,7 @@ function renderTradeLogList() {
             ${t.entry_price && Number(t.entry_price) !== Number(t.price) ? `<span class="entry-sub">from ${formatPrice(t.entry_price)}</span>` : ''}
           </div>
           <div class="trade-card-pnl" style="color: ${pnlColor};">
-            ${pnlVal !== null ? `INR ${pnlVal >= 0 ? '+' : ''}${pnlVal.toFixed(2)}${pnlPct !== null ? ` (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)` : ''}` : `₹${Number(t.amount || 0).toFixed(2)} Margin`}
+            ${pnlVal !== null ? `INR ${pnlVal >= 0 ? '+' : ''}${pnlVal.toFixed(2)}${pnlPct !== null ? ` (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)` : ''}` : `₹${marginVal.toFixed(2)} Margin`}
           </div>
         </div>
 
@@ -1242,11 +1245,12 @@ function copyTradeHistoryToClipboard() {
   out += `------------------------------------------------------------\n`;
 
   allTradeHistory.forEach(t => {
+    const coinLabel = t.coin || t.symbol || (t.pair ? t.pair.replace('B-', '').replace('_USDT', '').replace('_INR', '') : 'BTC');
     const time = (t.time || "").padEnd(8);
     const type = (t.type || "").padEnd(5);
-    const coin = (t.coin || "").padEnd(6);
+    const coin = coinLabel.padEnd(6);
     const price = (`$${t.price}`).padEnd(11);
-    const pnl = t.pnl !== undefined ? `PnL: ${t.pnl >= 0 ? '+' : ''}${t.pnl}` : `Amt: ${t.amount}`;
+    const pnl = t.pnl !== undefined ? `PnL: ${t.pnl >= 0 ? '+' : ''}${t.pnl}` : `Amt: ${t.amount || t.invested_inr || 0}`;
     const pnlPad = pnl.padEnd(18);
     const reason = t.reason || t.note || "";
     out += `${time} | ${type} | ${coin} | ${price} | ${pnlPad} | ${reason}\n`;
@@ -1284,13 +1288,14 @@ function exportTradesToCSV() {
 
   let csv = "Timestamp,Time,Type,Coin,Price_USD,Amount_INR,PnL_INR,PnL_Pct,Reason_Note\n";
   allTradeHistory.forEach(t => {
+    const coinLabel = t.coin || t.symbol || (t.pair ? t.pair.replace('B-', '').replace('_USDT', '').replace('_INR', '') : 'BTC');
     const ts = (t.timestamp || "").replace(/"/g, '""');
     const time = (t.time || "").replace(/"/g, '""');
     const type = (t.type || "");
-    const coin = (t.coin || "");
+    const coin = coinLabel;
     const price = Number(t.price || 0);
-    const amt = Number(t.amount || 0);
-    const pnl = t.pnl !== undefined ? Number(t.pnl) : "";
+    const amt = Number(t.amount !== undefined ? t.amount : (t.invested_inr || 0));
+    const pnl = t.pnl !== undefined ? Number(t.pnl) : (t.pnl_inr !== undefined ? Number(t.pnl_inr) : "");
     const pnlPct = t.pnl_pct !== undefined ? Number(t.pnl_pct) : "";
     const reason = (t.reason || t.note || "").replace(/"/g, '""');
 
