@@ -1513,11 +1513,34 @@ function initDraggablePanels() {
   }
 
   let draggedEl = null;
+  let isHandleDragging = false;
+
+  // Allow drag initiation from either the drag-handle (⋮⋮) or the panel header bar
+  container.addEventListener("mousedown", (e) => {
+    // Never trigger drag if user is clicking buttons, inputs, dropdowns, links, or text inside trade log
+    if (e.target.closest("button, input, select, textarea, a, .trade-log-list, .trade-actions-toolbar, .trade-hud-container")) {
+      isHandleDragging = false;
+      return;
+    }
+    const handle = e.target.closest(".drag-handle") || e.target.closest(".panel-title-bar");
+    const panel = e.target.closest(".draggable-panel");
+    if (handle && panel) {
+      isHandleDragging = true;
+      draggedEl = panel;
+      panel.setAttribute("draggable", "true");
+    } else {
+      isHandleDragging = false;
+      document.querySelectorAll(".draggable-panel").forEach(p => p.setAttribute("draggable", "false"));
+    }
+  });
+
+  document.addEventListener("mouseup", () => {
+    isHandleDragging = false;
+  });
 
   container.addEventListener("dragstart", (e) => {
-    const handle = e.target.closest(".drag-handle");
     const panel = e.target.closest(".draggable-panel");
-    if (!handle || !panel) {
+    if (!isHandleDragging || !panel) {
       e.preventDefault();
       return false;
     }
@@ -1528,10 +1551,12 @@ function initDraggablePanels() {
   });
 
   container.addEventListener("dragend", (e) => {
+    isHandleDragging = false;
     const panel = e.target.closest(".draggable-panel");
     if (panel) panel.classList.remove("dragging");
     document.querySelectorAll(".draggable-panel").forEach(p => {
       p.classList.remove("drag-over-top", "drag-over-bottom");
+      p.setAttribute("draggable", "false");
     });
     draggedEl = null;
     savePanelOrder(container);
