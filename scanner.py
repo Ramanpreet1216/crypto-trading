@@ -210,11 +210,23 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     if not tickers:
         return []
 
-    usdt_pairs = [t for t in tickers if t.get("symbol", "").endswith("USDT") and t.get("priceChangePercent")]
+    # INSTITUTIONAL LIQUIDITY FILTER (Min $1,000,000 USDT 24h Volume):
+    # Completely blocks dead/illiquid micro-caps (e.g. BLAST, OTK, KAIO, AMP) that have wide spreads and fatal slippage.
+    MIN_LIQUIDITY_USDT = 1_000_000.0
+    usdt_pairs = [
+        t for t in tickers 
+        if t.get("symbol", "").endswith("USDT") 
+        and t.get("priceChangePercent")
+        and float(t.get("quoteVolume", 0) or 0) >= MIN_LIQUIDITY_USDT
+    ]
     if not usdt_pairs:
-        return []
+        # Fallback to top volume pairs if threshold is unusually high
+        usdt_pairs = [t for t in tickers if t.get("symbol", "").endswith("USDT") and t.get("priceChangePercent")]
+        usdt_pairs = sorted(usdt_pairs, key=lambda x: float(x.get("quoteVolume", 0) or 0), reverse=True)[:30]
+        if not usdt_pairs:
+            return []
 
-    # Gather top candidates: 4 top gainers, 4 top losers, 4 highest volume (cloud lightweight)
+    # Gather top liquid candidates: top gainers, top losers, top volume
     usdt_pairs_sorted_gain = sorted(usdt_pairs, key=lambda x: float(x.get("priceChangePercent", 0)), reverse=True)
     usdt_pairs_sorted_vol = sorted(usdt_pairs, key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)
     usdt_pairs_sorted_loss = sorted(usdt_pairs, key=lambda x: float(x.get("priceChangePercent", 0)))
@@ -222,7 +234,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     candidate_symbols = []
     seen = set()
 
-    for pool in [usdt_pairs_sorted_gain[:4], usdt_pairs_sorted_loss[:4], usdt_pairs_sorted_vol[:4]]:
+    for pool in [usdt_pairs_sorted_gain[:5], usdt_pairs_sorted_vol[:6], usdt_pairs_sorted_loss[:4]]:
         for item in pool:
             sym = item.get("symbol", "").replace("USDT", "")
             if sym.isascii() and sym.isalnum() and sym not in seen:

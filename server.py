@@ -158,18 +158,18 @@ def analyze_macro_market_regime():
         # 1. ALPHA MODE: Strong Macro Bull Run (breadth >= 58% and BTC bullish)
         if breadth_pct >= 58.0 and btc_bullish:
             mode = "ALPHA"
-            lev = 8
+            lev = 6
             tp_pct = 4.5  # Expand target to +4.5%
-            sl_pct = 1.8
-            min_conf = 80
+            sl_pct = 1.5  # Strict SL 1.5% -> Risk:Reward 3:1 (covers Indian tax)
+            min_conf = 82
             desc = f"🚀 Macro Bullish Expansion ({breadth_pct:.1f}% green, BTC Bullish). Auto: ALPHA (+4.5% TP, {lev}x Lev)."
 
         # 2. BALANCED MODE: Healthy Selective Market (breadth 40% - 58%)
         elif breadth_pct >= 40.0:
             mode = "BALANCED"
-            lev = 6
+            lev = 5
             tp_pct = 3.5  # Balanced target +3.5%
-            sl_pct = 1.5
+            sl_pct = 1.2  # Strict SL 1.2% -> Risk:Reward 2.9:1 (covers Indian tax)
             min_conf = 85
             desc = f"⚖️ Balanced Momentum ({breadth_pct:.1f}% green). Auto: BALANCED (+3.5% TP, {lev}x Lev)."
 
@@ -177,15 +177,15 @@ def analyze_macro_market_regime():
         else:
             mode = "SAFE"
             lev = 4  # Safe 4x leverage (zero liquidation risk)
-            tp_pct = 2.0  # Tight 2.0% profit banking
-            sl_pct = 1.2
+            tp_pct = 2.5  # Target +2.5%
+            sl_pct = 1.0  # Tight SL 1.0% -> Risk:Reward 2.5:1 (covers Indian tax)
             min_conf = 88  # High confidence filter
-            desc = f"🛡️ Defensive Pullback ({breadth_pct:.1f}% green, 86% dipping). Auto: SAFE Scalps (+2.0% TP, {lev}x Lev)."
+            desc = f"🛡️ Defensive Pullback ({breadth_pct:.1f}% green). Auto: SAFE Scalps (+2.5% TP, {lev}x Lev)."
 
         return mode, lev, tp_pct, sl_pct, min_conf, desc
     except Exception as e:
         print(f"[Market Regime Error]: {e}")
-        return "SAFE", 4, 2.0, 1.2, 85, "🛡️ Defensive Mode"
+        return "SAFE", 4, 2.5, 1.0, 85, "🛡️ Defensive Mode"
 
 
 # Bot background worker thread: 24/7 Autonomous Breakout Hunting & Execution Engine
@@ -214,18 +214,18 @@ def bot_worker():
                 invest_target = profile.get("investment_inr", 150.0)
 
                 # ==============================================================
-                # STATE A: NO OPEN POSITION -> AUTONOMOUS 739-COIN HUNTING
+                # STATE A: NO OPEN POSITION -> AUTONOMOUS TOP-LIQUIDITY HUNTING
                 # ==============================================================
                 if bot_state["active_position"] is None:
                     if now_ts < cooldown_until:
                         time_left = int(cooldown_until - now_ts)
-                        bot_state["last_signal"] = "SAFETY COOLDOWN"
-                        bot_state["last_reason"] = f"Safety buffer active ({time_left}s). Preventing rapid re-entry."
+                        bot_state["last_signal"] = "PATIENT COOLDOWN"
+                        bot_state["last_reason"] = f"Quality filter active ({time_left}s). Preventing rapid overtrading."
                         time.sleep(5)
                         continue
 
                     # Scan top setups matching current auto-adapted risk mode
-                    signals = scanner.scan_all_crypto_signals(min_confidence=dyn_min_conf, direction="UP", limit=10)
+                    signals = scanner.scan_all_crypto_signals(min_confidence=dyn_min_conf, direction="UP", limit=12)
                     valid_signals = [s for s in signals if recent_coins.get(s["coin"], 0) < now_ts] if signals else []
 
                     # Multi-Timeframe Quality Filter: Pick the strongest setup confirming on 15m & 1h
@@ -233,6 +233,10 @@ def bot_worker():
                     for candidate in valid_signals:
                         c_coin = candidate["coin"]
                         c_pair = f"B-{c_coin}_USDT"
+
+                        # Strict liquidity verification (Minimum $1M 24h USDT volume)
+                        if float(candidate.get("volume_usdt", 0) or 0) < 1_000_000.0:
+                            continue
 
                         c_candles = client.get_candles(pair=c_pair, interval="15m", limit=30)
                         if c_candles is not None and len(c_candles) >= 15:
@@ -242,11 +246,11 @@ def bot_worker():
                             ema_fast = float(last_row.get("ema_fast", 0))
                             ema_slow = float(last_row.get("ema_slow", 0))
 
-                            # Reject overbought coins (RSI > 68 is dangerous FOMO)
-                            if coin_rsi > 68.0:
+                            # Reject overbought coins (RSI > 65 is dangerous FOMO) or deeply falling
+                            if coin_rsi > 65.0 or coin_rsi < 45.0:
                                 continue
-                            # Reject coins currently falling below slow EMA
-                            if ema_fast < ema_slow * 0.993:
+                            # Require bullish trend: EMA fast >= EMA slow
+                            if ema_fast < ema_slow * 0.998:
                                 continue
 
                             # Live ticker validation: Must match CoinDCX ticker!
@@ -319,7 +323,7 @@ def bot_worker():
                         record_paper_trade(trade_rec)
                     else:
                         bot_state["last_signal"] = f"MACRO: {auto_mode} (TP +{dyn_tp_pct}%)"
-                        bot_state["last_reason"] = f"{regime_desc} Waiting for optimal A+ setup (min {dyn_min_conf}% conf)..."
+                        bot_state["last_reason"] = f"{regime_desc} Waiting for high-liquidity A+ setup (min {dyn_min_conf}% conf)..."
 
                 # ==============================================================
                 # STATE B: POSITION OPEN -> LIVE TARGET & TRAILING STOP MANAGEMENT
@@ -329,81 +333,98 @@ def bot_worker():
                     pair = pos["pair"]
                     pos_lev = pos.get("leverage", dyn_lev)
 
-                    # 20-second grace period after entry before evaluating stop-loss
+                    # Minimum trade maturation buffer (90s) before evaluating exit conditions
                     pos_age = time.time() - pos.get("entry_time", 0)
-                    if pos_age < 20:
-                        bot_state["last_reason"] = f"Holding {pos['symbol']}: Initializing position buffer ({int(20 - pos_age)}s)..."
+                    if pos_age < 90:
+                        bot_state["last_reason"] = f"Holding {pos['symbol']}: Maturing trade setup ({int(90 - pos_age)}s buffer)..."
                         time.sleep(5)
                         continue
 
-                    df = client.get_candles(pair=pair, interval=config.TIMEFRAME, limit=35)
-                    if df is not None and len(df) > 0:
-                        pred = predictor.predict_next_move(df, forecast_steps=10)
-                        bot_state["latest_prediction"] = pred
-                        current_price = pred.get("current_price", pos["buy_price"])
+                    # Fetch live mark price from CoinDCX ticker first, fallback to candles
+                    current_price = pos["buy_price"]
+                    try:
+                        stats = client.get_futures_stats(pos["symbol"])
+                        live_mk = float(stats.get("mark_price", 0) or stats.get("last_price", 0) or 0)
+                        if live_mk > 0:
+                            current_price = live_mk
+                    except Exception:
+                        pass
 
-                        gain_pct = ((current_price - pos["buy_price"]) / pos["buy_price"]) * 100.0
+                    if current_price == pos["buy_price"]:
+                        df = client.get_candles(pair=pair, interval=config.TIMEFRAME, limit=35)
+                        if df is not None and len(df) > 0:
+                            current_price = float(df.iloc[-1]["close"])
 
-                        # 1. Breakeven Profit Lock:
-                        # As soon as trade gains >= 1.2%, move stop-loss to entry + 0.3% (guaranteed profit lock!)
-                        if gain_pct >= 1.2:
-                            lock_sl = pos["buy_price"] * 1.003
-                            if lock_sl > pos.get("trailing_stop", pos["stop_loss"]):
-                                pos["trailing_stop"] = lock_sl
+                    gain_pct = ((current_price - pos["buy_price"]) / pos["buy_price"]) * 100.0
 
-                        # 2. Dynamic Trailing Stop Loss:
-                        # As price creates new highs >= 1.8%, trail 1.2% below peak
-                        if current_price > pos.get("peak_price", pos["buy_price"]):
-                            pos["peak_price"] = current_price
-                            if gain_pct >= 1.8:
-                                trailed = current_price * 0.988 # 1.2% buffer below peak
-                                if trailed > pos.get("trailing_stop", pos["stop_loss"]):
-                                    pos["trailing_stop"] = trailed
+                    # 1. Tier 1: Breakeven Profit Lock (Indian Tax & Fee Shield):
+                    # As soon as trade gains >= 1.2%, lock stop-loss to entry + 0.4%
+                    # (Guarantees trade exits green after 0.1% exchange taker fees & 1% TDS!)
+                    if gain_pct >= 1.2:
+                        lock_sl = pos["buy_price"] * 1.004
+                        if lock_sl > pos.get("trailing_stop", pos["stop_loss"]):
+                            pos["trailing_stop"] = lock_sl
 
-                        active_sl = pos.get("trailing_stop", pos["stop_loss"])
-                        pnl_pct = ((current_price - pos["buy_price"]) / pos["buy_price"]) * 100.0 * pos_lev
-                        pnl = pos["invested"] * (pnl_pct / 100.0)
+                    # 2. Tier 2: Solid Profit Lock:
+                    # Once trade gains >= 2.0%, lock stop-loss to entry + 1.2%
+                    if gain_pct >= 2.0:
+                        lock_sl_tier2 = pos["buy_price"] * 1.012
+                        if lock_sl_tier2 > pos.get("trailing_stop", pos["stop_loss"]):
+                            pos["trailing_stop"] = lock_sl_tier2
 
-                        exit_trigger = None
-                        if current_price >= pos.get("target", pos["buy_price"] * 1.02):
-                            exit_trigger = f"Target Hit (${pos['target']})! Profit +{pnl_pct:.1f}%"
-                        elif current_price <= active_sl:
-                            exit_trigger = f"Stop-Loss / Trailed Exit at ${active_sl:.4f} (PnL: {pnl_pct:+.1f}%)"
-                        elif pred.get("direction") == "DOWN" and pred.get("probability", 0) >= 88:
-                            exit_trigger = f"Early Reversal Warning (88%+ DOWN predicted)! Exiting to preserve capital."
+                    # 3. Tier 3: Dynamic Trailing Stop for High-Gain Runners:
+                    # As price pushes higher >= 2.8%, trail 1.2% below peak price
+                    if current_price > pos.get("peak_price", pos["buy_price"]):
+                        pos["peak_price"] = current_price
+                        if gain_pct >= 2.8:
+                            trailed = current_price * 0.988  # 1.2% buffer below peak
+                            if trailed > pos.get("trailing_stop", pos["stop_loss"]):
+                                pos["trailing_stop"] = trailed
 
-                        if exit_trigger:
-                            proceeds = pos["invested"] + pnl
-                            bot_state["paper_balance"] += proceeds
+                    active_sl = pos.get("trailing_stop", pos["stop_loss"])
+                    pnl_pct = ((current_price - pos["buy_price"]) / pos["buy_price"]) * 100.0 * pos_lev
+                    pnl = pos["invested"] * (pnl_pct / 100.0)
 
-                            # Execute exit order on CoinDCX if live trading
-                            if not config.DRY_RUN:
-                                try:
-                                    live_exit = client.place_futures_order("sell", pair=pos["pair"], quantity=pos["quantity"], leverage=pos_lev)
-                                    print(f"[LIVE AUTONOMOUS EXIT ORDER]: {live_exit}")
-                                except Exception as live_err:
-                                    print(f"[LIVE AUTONOMOUS EXIT ERROR]: {live_err}")
+                    exit_trigger = None
+                    if current_price >= pos.get("target", pos["buy_price"] * 1.025):
+                        exit_trigger = f"Target Hit (${pos['target']})! Profit +{pnl_pct:.1f}% (+₹{pnl:.2f})"
+                    elif current_price <= active_sl:
+                        is_profit_exit = active_sl > pos["buy_price"]
+                        lbl = "Breakeven/Trailed Profit Lock" if is_profit_exit else "Stop-Loss Protection"
+                        exit_trigger = f"{lbl} at ${active_sl:.4f} (PnL: {pnl_pct:+.1f}%, ₹{pnl:+.2f})"
 
-                            bot_state["last_signal"] = "AUTONOMOUS EXIT"
-                            bot_state["last_reason"] = exit_trigger
-                            exit_rec = {
-                                "type": "SELL",
-                                "coin": pos["symbol"],
-                                "price": current_price,
-                                "amount": round(proceeds, 2),
-                                "pnl": round(pnl, 2),
-                                "pnl_pct": round(pnl_pct, 2),
-                                "reason": exit_trigger,
-                                "time": datetime.now().strftime("%H:%M:%S"),
-                                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            }
-                            bot_state["trade_history"].insert(0, exit_rec)
-                            record_paper_trade(exit_rec)
-                            recent_coins[pos["symbol"]] = time.time() + 3600  # 1 hour cooldown on this coin
-                            cooldown_until = time.time() + 300  # 5 min cooldown before scanning next coin
-                            bot_state["active_position"] = None
-                        else:
-                            bot_state["last_reason"] = f"Monitoring {pos['symbol']}: Target ${pos.get('target')}, Live PnL: {pnl_pct:+.1f}% (₹{pnl:+.2f})"
+                    if exit_trigger:
+                        proceeds = pos["invested"] + pnl
+                        bot_state["paper_balance"] += proceeds
+
+                        # Execute exit order on CoinDCX if live trading
+                        if not config.DRY_RUN:
+                            try:
+                                live_exit = client.place_futures_order("sell", pair=pos["pair"], quantity=pos["quantity"], leverage=pos_lev)
+                                print(f"[LIVE AUTONOMOUS EXIT ORDER]: {live_exit}")
+                            except Exception as live_err:
+                                print(f"[LIVE AUTONOMOUS EXIT ERROR]: {live_err}")
+
+                        bot_state["last_signal"] = "AUTONOMOUS EXIT"
+                        bot_state["last_reason"] = exit_trigger
+                        exit_rec = {
+                            "type": "SELL",
+                            "coin": pos["symbol"],
+                            "price": current_price,
+                            "amount": round(proceeds, 2),
+                            "pnl": round(pnl, 2),
+                            "pnl_pct": round(pnl_pct, 2),
+                            "reason": exit_trigger,
+                            "time": datetime.now().strftime("%H:%M:%S"),
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        }
+                        bot_state["trade_history"].insert(0, exit_rec)
+                        record_paper_trade(exit_rec)
+                        recent_coins[pos["symbol"]] = time.time() + 7200  # 2 hours cooldown on this coin (prevents overtrading same coin)
+                        cooldown_until = time.time() + 600  # 10 min cooldown before scanning next coin
+                        bot_state["active_position"] = None
+                    else:
+                        bot_state["last_reason"] = f"Monitoring {pos['symbol']}: Target ${pos.get('target')}, Live PnL: {pnl_pct:+.1f}% (₹{pnl:+.2f})"
 
             except Exception as e:
                 print(f"[Autonomous Worker Error] {e}")
