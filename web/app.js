@@ -1119,6 +1119,27 @@ function filterTradeDirection(dir) {
   renderTradeLogList();
 }
 
+function formatTradeDateTime(t) {
+  const ts = t.timestamp || "";
+  const tm = t.time || "";
+
+  // 1. If timestamp has date and clock (e.g. "2026-10-09 21:35:12" or "2026-10-09T21:35:12")
+  const raw = ts || tm;
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}:\d{2}(?::\d{2})?)/);
+  if (match) {
+    const [_, year, month, day, clock] = match;
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const mStr = monthNames[parseInt(month, 10) - 1] || month;
+    return `<span class="time-date">${day} ${mStr} ${year}</span> <span class="time-clock">${clock}</span>`;
+  }
+
+  // 2. If timestamp or time has just time "17:19:31"
+  if (tm) {
+    return `<span class="time-clock">${tm}</span>`;
+  }
+  return raw;
+}
+
 function renderTradeLogList() {
   if (!elTradeLogList) return;
 
@@ -1199,7 +1220,7 @@ function renderTradeLogList() {
             <span class="trade-card-coin">${coinLabel}</span>
             ${lev ? `<span class="trade-badge-lev">${lev}</span>` : ''}
           </div>
-          <div class="trade-card-time">${t.time || ''}</div>
+          <div class="trade-card-time">${formatTradeDateTime(t)}</div>
         </div>
 
         <div class="trade-card-middle">
@@ -1607,7 +1628,96 @@ function initDraggablePanels() {
     target.classList.remove("drag-over-top", "drag-over-bottom");
     savePanelOrder(container);
   });
+
+  // Touch Drag Support for Mobile Phones & Tablets
+  let touchDraggedEl = null;
+  let touchOverEl = null;
+  let touchOverPos = null;
+
+  container.addEventListener("touchstart", (e) => {
+    const handle = e.target.closest(".drag-handle");
+    if (!handle) return;
+    const panel = handle.closest(".draggable-panel");
+    if (!panel) return;
+
+    touchDraggedEl = panel;
+    touchDraggedEl.classList.add("dragging");
+    if (navigator.vibrate) navigator.vibrate(25);
+  }, { passive: true });
+
+  container.addEventListener("touchmove", (e) => {
+    if (!touchDraggedEl) return;
+    const touch = e.touches[0];
+    const elemUnder = document.elementFromPoint(touch.clientX, touch.clientY);
+    if (!elemUnder) return;
+
+    const target = elemUnder.closest(".draggable-panel");
+    document.querySelectorAll(".draggable-panel").forEach(p => {
+      p.classList.remove("drag-over-top", "drag-over-bottom");
+    });
+
+    if (target && target !== touchDraggedEl && container.contains(target)) {
+      touchOverEl = target;
+      const rect = target.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      if (touch.clientY < midY) {
+        touchOverPos = "top";
+        target.classList.add("drag-over-top");
+      } else {
+        touchOverPos = "bottom";
+        target.classList.add("drag-over-bottom");
+      }
+    } else {
+      touchOverEl = null;
+      touchOverPos = null;
+    }
+  }, { passive: true });
+
+  container.addEventListener("touchend", () => {
+    if (!touchDraggedEl) return;
+    touchDraggedEl.classList.remove("dragging");
+
+    if (touchOverEl && touchOverPos) {
+      if (touchOverPos === "top") {
+        container.insertBefore(touchDraggedEl, touchOverEl);
+      } else {
+        container.insertBefore(touchDraggedEl, touchOverEl.nextSibling);
+      }
+      savePanelOrder(container);
+      if (navigator.vibrate) navigator.vibrate(35);
+    }
+
+    document.querySelectorAll(".draggable-panel").forEach(p => {
+      p.classList.remove("drag-over-top", "drag-over-bottom");
+    });
+    touchDraggedEl = null;
+    touchOverEl = null;
+    touchOverPos = null;
+  });
 }
+
+window.reorderPanelStep = function(btn, step) {
+  const panel = btn.closest(".draggable-panel");
+  if (!panel || !panel.parentElement) return;
+  const parent = panel.parentElement;
+  const panels = Array.from(parent.querySelectorAll(".draggable-panel"));
+  const idx = panels.indexOf(panel);
+  if (idx < 0) return;
+
+  const newIdx = idx + step;
+  if (newIdx < 0 || newIdx >= panels.length) return;
+
+  if (step === -1) {
+    parent.insertBefore(panel, panels[newIdx]);
+  } else {
+    parent.insertBefore(panel, panels[newIdx].nextSibling);
+  }
+
+  savePanelOrder(parent);
+  panel.classList.add("panel-reordered-flash");
+  setTimeout(() => panel.classList.remove("panel-reordered-flash"), 400);
+  if (navigator.vibrate) navigator.vibrate(25);
+};
 
 function savePanelOrder(container) {
   const panelIds = Array.from(container.querySelectorAll(".draggable-panel")).map(p => p.id);
