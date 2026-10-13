@@ -1309,18 +1309,27 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
                     "summary": {
                         "total_trades": 0, "completed_trades": 0, "wins": 0,
                         "losses": 0, "win_rate_pct": 0, "total_pnl_inr": 0,
-                        "total_volume_inr": 0, "is_profitable": False
+                        "total_fees_inr": 0, "total_volume_inr": 0, "is_profitable": False
                     },
-                    "trades": []
+                    "trades": [],
+                    "is_running": True,
+                    "active_positions": [],
+                    "active_position": None
                 }
                 with open(TRADES_FILE, "w", encoding="utf-8") as f:
                     json.dump(payload, f, indent=2)
                 bot_state["trade_history"] = []
+                bot_state["active_positions"] = []
+                bot_state["active_position"] = None
+                bot_state["paper_balance"] = 1500.0
+                bot_state["performance_summary"] = payload["summary"]
+                bot_state["last_signal"] = "FRESH RESTART"
+                bot_state["last_reason"] = "All trades reset. Scanning 600+ coins across 3 fresh slots..."
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                self.wfile.write(json.dumps({"status": "success", "message": "Paper history cleared"}).encode("utf-8"))
+                self.wfile.write(json.dumps({"status": "success", "message": "Paper history & active trades cleared"}).encode("utf-8"))
                 return
             except Exception as e:
                 self.send_error(500, str(e))
