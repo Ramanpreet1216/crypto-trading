@@ -216,37 +216,36 @@ def analyze_macro_market_regime():
         if breadth_pct >= 58.0 and btc_bullish:
             mode = "ALPHA"
             lev = 6
-            tp_pct = 4.8  # Expand target to +4.8%
-            sl_pct = 1.6  # SL 1.6% -> Risk:Reward 3:1 (covers Indian tax)
+            tp_pct = 5.0  # +30.0% leveraged target
+            sl_pct = 1.5  # SL 1.5% -> Risk:Reward 3.33:1 (covers Indian tax)
             min_conf = 82
             preferred_dir = "UP"
-            desc = f"🚀 Macro Bullish Expansion ({breadth_pct:.1f}% green, BTC Bullish). Auto: ALPHA (+4.8% TP, {lev}x Lev)."
+            desc = f"🚀 Macro Bullish Expansion ({breadth_pct:.1f}% green, BTC Bullish). Auto: ALPHA (+5.0% TP, {lev}x Lev)."
 
         # 2. BALANCED MODE: Healthy Selective Market (breadth 40% - 58%)
         elif breadth_pct >= 40.0:
             mode = "BALANCED"
             lev = 5
-            tp_pct = 3.6  # Balanced target +3.6%
-            sl_pct = 1.4  # SL 1.4% -> Risk:Reward 2.57:1 (covers Indian tax)
+            tp_pct = 4.2  # +21.0% leveraged target
+            sl_pct = 1.3  # SL 1.3% -> Risk:Reward 3.23:1 (covers Indian tax)
             min_conf = 85
             preferred_dir = "ALL"
-            desc = f"⚖️ Balanced Momentum ({breadth_pct:.1f}% green). Auto: BALANCED (+3.6% TP, {lev}x Lev)."
+            desc = f"⚖️ Balanced Momentum ({breadth_pct:.1f}% green). Auto: BALANCED (+4.2% TP, {lev}x Lev)."
 
         # 3. SAFE SCALP MODE: Defensive / Market Pullback (breadth < 40%)
         else:
             mode = "SAFE"
             lev = 4  # Safe 4x leverage (zero liquidation risk)
-            tp_pct = 2.8  # Target +2.8%
-            sl_pct = 1.2  # SL 1.2% -> Risk:Reward 2.33:1 (covers Indian tax)
+            tp_pct = 3.8  # +15.2% leveraged target
+            sl_pct = 1.1  # SL 1.1% -> Risk:Reward 3.45:1 (covers Indian tax)
             min_conf = 88  # High confidence filter
-            # In a dumping market, default to SHORTing breakdowns or scan ALL high-confluence setups
             preferred_dir = "DOWN" if not btc_bullish else "ALL"
-            desc = f"🛡️ Defensive Pullback ({breadth_pct:.1f}% green). Auto: SAFE Two-Way Scalps (+2.8% TP, {lev}x Lev)."
+            desc = f"🛡️ Defensive Pullback ({breadth_pct:.1f}% green). Auto: SAFE Two-Way Scalps (+3.8% TP, {lev}x Lev)."
 
         return mode, lev, tp_pct, sl_pct, min_conf, desc, preferred_dir
     except Exception as e:
         print(f"[Market Regime Error]: {e}")
-        return "SAFE", 4, 2.8, 1.2, 85, "🛡️ Defensive Mode", "ALL"
+        return "SAFE", 4, 3.8, 1.1, 85, "🛡️ Defensive Mode", "ALL"
 
 
 # Bot background worker thread: 24/7 Autonomous Breakout Hunting & Execution Engine
@@ -325,34 +324,44 @@ def bot_worker():
                     pos["peak_pnl_pct"] = peak_pnl
 
                     # ----------------------------------------------------------
-                    # DYNAMIC RUNNER & ADAPTIVE RATINGS ENGINE
+                    # HIGH-REWARD ANTI-CHOKE TRAILING & PROFIT-PROTECTION ENGINE
                     # ----------------------------------------------------------
-                    # Tier 1: Breakeven Profit Lock at +5% leveraged PnL
-                    if gross_pnl_pct >= 5.0:
-                        be_price = round(buy_price * (1.0 + (0.015 / pos_lev)), precision) if pos_dir == "LONG" else round(buy_price * (1.0 - (0.015 / pos_lev)), precision)
-                        cur_trail = pos.get("trailing_stop", pos.get("stop_loss", 0))
-                        if pos_dir == "LONG" and be_price > cur_trail:
-                            pos["trailing_stop"] = be_price
-                        elif pos_dir == "SHORT" and (cur_trail == 0 or be_price < cur_trail):
-                            pos["trailing_stop"] = be_price
+                    # Stage 1: Give trades breathing room! (0% to +8.5% PnL)
+                    # Normal ±0.5% - 0.8% micro-pullbacks are allowed without moving SL.
 
-                    # Tier 2: Strong Momentum Trigger -> RUNNER MODE (+15% to +30% TP) & Lock +7% Net Profit
+                    # Stage 2: Strong Breakeven Lock at +8.5% leveraged PnL
+                    # Locks at least +4.5% leveraged PnL (+₹6.50+ net profit minimum guaranteed after fees).
+                    # Eliminates premature exits like +₹0.82 or +₹1.12 completely!
+                    if gross_pnl_pct >= 8.5:
+                        lock_pnl_stage2 = 4.5
+                        lock_price_s2 = round(buy_price * (1.0 + (lock_pnl_stage2 / 100.0) / pos_lev), precision) if pos_dir == "LONG" else round(buy_price * (1.0 - (lock_pnl_stage2 / 100.0) / pos_lev), precision)
+                        cur_trail = pos.get("trailing_stop", pos.get("stop_loss", 0))
+                        if pos_dir == "LONG" and lock_price_s2 > cur_trail:
+                            pos["trailing_stop"] = lock_price_s2
+                        elif pos_dir == "SHORT" and (cur_trail == 0 or lock_price_s2 < cur_trail):
+                            pos["trailing_stop"] = lock_price_s2
+
+                    # Stage 3: Major Profit Lock at +13.0% leveraged PnL
+                    # Locks at least +8.5% leveraged PnL (+₹12.50+ net profit guaranteed!)
+                    if gross_pnl_pct >= 13.0:
+                        lock_pnl_stage3 = 8.5
+                        lock_price_s3 = round(buy_price * (1.0 + (lock_pnl_stage3 / 100.0) / pos_lev), precision) if pos_dir == "LONG" else round(buy_price * (1.0 - (lock_pnl_stage3 / 100.0) / pos_lev), precision)
+                        cur_trail = pos.get("trailing_stop", pos.get("stop_loss", 0))
+                        if pos_dir == "LONG" and lock_price_s3 > cur_trail:
+                            pos["trailing_stop"] = lock_price_s3
+                        elif pos_dir == "SHORT" and (cur_trail == 0 or lock_price_s3 < cur_trail):
+                            pos["trailing_stop"] = lock_price_s3
+
+                    # Stage 4: Mega-Runner Mode (+18.0% leveraged PnL / ~+4.5% spot move)
+                    # When a breakout is strong (+18%+), expand target to +28% - +35% PnL (+₹38+ gain)!
                     if gross_pnl_pct >= config.RUNNER_TRIGGER_PNL_PCT:
                         pos["is_runner"] = True
                         pos["runner_target_pct"] = config.RUNNER_EXTENDED_TP_PCT
                         extended_target = round(buy_price * (1.0 + (config.RUNNER_EXTENDED_TP_PCT / 100.0) / pos_lev), precision) if pos_dir == "LONG" else round(buy_price * (1.0 - (config.RUNNER_EXTENDED_TP_PCT / 100.0) / pos_lev), precision)
                         pos["target"] = extended_target
 
-                        # Lock at least +7% net profit guaranteed
-                        lock_price = round(buy_price * (1.0 + (config.RUNNER_LOCK_PROFIT_PCT / 100.0) / pos_lev), precision) if pos_dir == "LONG" else round(buy_price * (1.0 - (config.RUNNER_LOCK_PROFIT_PCT / 100.0) / pos_lev), precision)
-                        cur_trail = pos.get("trailing_stop", pos.get("stop_loss", 0))
-                        if pos_dir == "LONG" and lock_price > cur_trail:
-                            pos["trailing_stop"] = lock_price
-                        elif pos_dir == "SHORT" and (cur_trail == 0 or lock_price < cur_trail):
-                            pos["trailing_stop"] = lock_price
-
-                    # Tier 3: High-Gain Dynamic Trailing Ratchet (Trail 9% below peak PnL, between 7% and 12%)
-                    if peak_pnl >= 16.0:
+                    # High-Gain Trailing Ratchet for Runners (Trail 7% below peak, locking at least +11% profit)
+                    if peak_pnl >= 18.0:
                         trail_pnl_lvl = max(config.RUNNER_LOCK_PROFIT_PCT, peak_pnl - config.RUNNER_TRAILING_BUFFER_PCT)
                         trail_price = round(buy_price * (1.0 + (trail_pnl_lvl / 100.0) / pos_lev), precision) if pos_dir == "LONG" else round(buy_price * (1.0 - (trail_pnl_lvl / 100.0) / pos_lev), precision)
                         cur_trail = pos.get("trailing_stop", pos.get("stop_loss", 0))
@@ -470,15 +479,33 @@ def bot_worker():
                             ema_fast = float(last_row.get("ema_fast", 0))
                             ema_slow = float(last_row.get("ema_slow", 0))
 
+                            # 1. Higher-Timeframe (1-Hour) Trend Alignment Filter
+                            # Never trade against the 1-hour macro trend (eliminates fakeout whipsaws)
+                            try:
+                                c_candles_1h = client.get_candles(pair=c_pair, interval="1h", limit=24)
+                                if c_candles_1h is not None and len(c_candles_1h) >= 15:
+                                    df_1h = calculate_indicators(c_candles_1h)
+                                    last_1h = df_1h.iloc[-1]
+                                    close_1h = float(last_1h.get("close", 0))
+                                    slow_1h = float(last_1h.get("ema_slow", 0))
+                                    fast_1h = float(last_1h.get("ema_fast", 0))
+                                    if c_dir == "UP" and (close_1h < slow_1h * 0.998 or fast_1h < slow_1h * 0.995):
+                                        continue
+                                    if c_dir == "DOWN" and (close_1h > slow_1h * 1.002 or fast_1h > slow_1h * 1.005):
+                                        continue
+                            except Exception:
+                                pass
+
+                            # 2. 15-Minute Momentum & Breakout Confluence
                             if c_dir == "UP":
-                                if coin_rsi > 65.0 or coin_rsi < 44.0:
+                                if coin_rsi > 64.0 or coin_rsi < 46.0:
                                     continue
-                                if ema_fast < ema_slow * 0.998:
+                                if ema_fast < ema_slow * 1.001:
                                     continue
                             else:
-                                if coin_rsi < 35.0 or coin_rsi > 58.0:
+                                if coin_rsi < 36.0 or coin_rsi > 54.0:
                                     continue
-                                if ema_fast > ema_slow * 1.002:
+                                if ema_fast > ema_slow * 0.999:
                                     continue
 
                             live_stats = client.get_futures_stats(c_coin)
