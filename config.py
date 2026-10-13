@@ -62,7 +62,14 @@ CURRENT_RISK_MODE = "BALANCED"
 # Trade settings (Active defaults derived from CURRENT_RISK_MODE)
 INVESTMENT_PER_TRADE_INR = RISK_PROFILES[CURRENT_RISK_MODE]["investment_inr"]
 LEVERAGE = RISK_PROFILES[CURRENT_RISK_MODE]["leverage"]
-MAX_OPEN_POSITIONS = 1
+MAX_OPEN_POSITIONS = 3  # Up to 3 concurrent active positions simultaneously
+SAME_COIN_COOLDOWN_SECONDS = 7200  # 2 hours cooldown before re-trading the same coin
+
+# Dynamic Adaptive Runner Settings (15% - 30% Target Extension & 7% - 12% Profit Lock)
+RUNNER_TRIGGER_PNL_PCT = 10.0  # When trade hits +10% PnL, shift TP to runner mode
+RUNNER_EXTENDED_TP_PCT = 25.0  # Auto-shift TP up to +25% - +30%
+RUNNER_LOCK_PROFIT_PCT = 7.0   # Lock at least +7% guaranteed net profit
+RUNNER_TRAILING_BUFFER_PCT = 9.0 # Trail 9% below peak PnL (within 7% - 12% range)
 
 # Strategy settings (EMA Crossover + RSI)
 FAST_EMA_PERIOD = 9

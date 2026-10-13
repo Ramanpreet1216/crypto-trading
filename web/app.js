@@ -1036,16 +1036,47 @@ async function syncBotStatus() {
       }
     }
 
-    if (data.active_position) {
-      const pos = data.active_position;
-      const isShort = pos.direction === "SHORT";
-      elPosBadge.textContent = `ACTIVE ${isShort ? 'SHORT' : 'LONG'} [${pos.symbol}]`;
-      elPosBadge.style.color = isShort ? "#ef4444" : "#10b981";
-      elPosDetails.innerHTML = `${isShort ? 'Shorted' : 'Bought'} <b>${pos.quantity.toFixed(4)} ${pos.symbol}</b> @ ${formatPrice(pos.buy_price)}<br>Target: <b>${formatPrice(pos.target)}</b> | Stop: <b>${formatPrice(pos.stop_loss)}</b>`;
+    const positions = (data.active_positions && Array.isArray(data.active_positions) && data.active_positions.length > 0)
+      ? data.active_positions
+      : (data.active_position ? [data.active_position] : []);
+
+    if (positions.length > 0) {
+      elPosBadge.textContent = `ACTIVE (${positions.length}/3 SLOTS)`;
+      elPosBadge.style.color = "#38bdf8";
+
+      let posHtml = '<div class="active-positions-list">';
+      positions.forEach(pos => {
+        const isShort = (pos.direction || pos.side) === "SHORT";
+        const isRunner = Boolean(pos.is_runner);
+        const lev = pos.leverage || 6;
+        const invested = Number(pos.invested || 150).toFixed(2);
+        const qty = Number(pos.quantity || 0).toFixed(4);
+        const target = pos.target ? formatPrice(pos.target) : "--";
+        const stop = pos.trailing_stop ? formatPrice(pos.trailing_stop) : (pos.stop_loss ? formatPrice(pos.stop_loss) : "--");
+        const runnerTag = isRunner ? `<span class="badge-runner">⚡ RUNNER (+${pos.runner_target_pct || 25}% TP)</span>` : '';
+
+        posHtml += `
+          <div class="active-pos-card ${isShort ? 'short-pos' : 'long-pos'}">
+            <div class="pos-card-head">
+              <span class="pos-dir-pill ${isShort ? 'short' : 'long'}">${isShort ? 'SHORT' : 'LONG'}</span>
+              <span class="pos-coin-name">${pos.symbol}</span>
+              <span class="pos-lev-badge">${lev}x</span>
+              ${runnerTag}
+              <button type="button" class="btn-close-single-pos" onclick="closePositionByCoin('${pos.symbol}')" title="Close ${pos.symbol}">✕ Close</button>
+            </div>
+            <div class="pos-card-metrics">
+              <div class="pos-m-row"><span>Entry:</span> <b>${formatPrice(pos.buy_price)}</b> • <span>Margin:</span> <b>₹${invested}</b> (${qty} ${pos.symbol})</div>
+              <div class="pos-m-row"><span>Target:</span> <b class="pos-tp-txt">${target}</b> • <span>SL/Trail:</span> <b class="pos-sl-txt">${stop}</b></div>
+            </div>
+          </div>
+        `;
+      });
+      posHtml += '</div>';
+      elPosDetails.innerHTML = posHtml;
     } else {
-      elPosBadge.textContent = "NO ACTIVE TRADE (FUTURES WALLET)";
+      elPosBadge.textContent = "NO ACTIVE TRADES (0/3 SLOTS)";
       elPosBadge.style.color = "#94a3b8";
-      elPosDetails.textContent = `Model Status: [${data.last_signal}] - ${data.last_reason}`;
+      elPosDetails.textContent = `Model Status: [${data.last_signal || 'AUTONOMOUS 24/7'}] - ${data.last_reason || 'Scanning 600+ coins'}`;
     }
 
     if (data.performance_summary) {
@@ -1499,6 +1530,27 @@ async function executeCustomOrder() {
     console.error("Order error:", err);
   }
 }
+
+async function closePositionByCoin(coin) {
+  if (!confirm(`Are you sure you want to close position ${coin}?`)) return;
+  try {
+    const res = await fetch("/api/bot/close_position", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ coin: coin })
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.status === "success") {
+      syncBotStatus();
+    } else {
+      alert(data.message || "Could not close position.");
+    }
+  } catch (err) {
+    console.error("Close position error:", err);
+  }
+}
+window.closePositionByCoin = closePositionByCoin;
 
 async function closeActivePositionManually() {
   try {
