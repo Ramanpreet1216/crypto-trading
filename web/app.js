@@ -960,20 +960,27 @@ async function syncBotStatus() {
 
     isBotRunning = data.is_running;
     const isLive = !data.dry_run && data.real_connected;
-    const futuresBal = (data.futures_balance !== undefined && data.futures_balance > 0) ? data.futures_balance : (data.live_balance || 1154.53);
+    const futuresBal = (data.futures_balance !== undefined && data.futures_balance > 0) ? data.futures_balance : (data.live_balance || 1554.01);
     const spotBal = data.spot_balance !== undefined ? data.spot_balance : 553.01;
-    const displayBal = isLive ? futuresBal : data.paper_balance;
+    const paperBal = data.paper_balance !== undefined ? data.paper_balance : 30000.0;
+    const displayBal = isLive ? futuresBal : paperBal;
     
     if (elHeaderBalance) elHeaderBalance.textContent = `INR ${displayBal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     if (elCardBalance) elCardBalance.textContent = `INR ${displayBal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
     const elFuturesBal = document.getElementById("card-futures-balance");
     if (elFuturesBal) {
-      elFuturesBal.textContent = `INR ${futuresBal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const activeFutures = isLive ? futuresBal : paperBal;
+      elFuturesBal.textContent = `INR ${activeFutures.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
     const elSpotBal = document.getElementById("card-spot-balance");
     if (elSpotBal) {
       elSpotBal.textContent = `INR ${spotBal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+    const elTradeChunk = document.getElementById("card-trade-chunk");
+    if (elTradeChunk) {
+      const slotSize = isLive ? Math.round(futuresBal / 10) : Math.round(paperBal / 10);
+      elTradeChunk.textContent = `₹${slotSize.toLocaleString("en-IN")} / slot`;
     }
 
     // Update wallet badge label
@@ -1006,11 +1013,14 @@ async function syncBotStatus() {
       const modeBadge = document.getElementById("risk-mode-badge");
       const modeDesc = document.getElementById("risk-mode-desc");
       const activeMode = data.active_risk_mode || data.risk_mode;
-      const tpTarget = data.active_target_tp || (activeMode === 'SAFE' ? 2.0 : (activeMode === 'ALPHA' ? 4.5 : 3.5));
+      const tpTarget = data.active_target_tp || (activeMode === 'USER_MIRROR' ? 1.25 : (activeMode === 'SAFE' ? 2.0 : (activeMode === 'ALPHA' ? 4.5 : 3.5)));
 
       if (modeBadge) {
         modeBadge.textContent = `AUTO: ${activeMode} (TP +${tpTarget}%)`;
-        if (activeMode === "ALPHA" || activeMode === "AGGRESSIVE") {
+        if (activeMode === "USER_MIRROR") {
+          modeBadge.style.color = "#c084fc";
+          modeBadge.style.background = "rgba(168, 85, 247, 0.2)";
+        } else if (activeMode === "ALPHA" || activeMode === "AGGRESSIVE") {
           modeBadge.style.color = "#f59e0b";
           modeBadge.style.background = "rgba(245, 158, 11, 0.2)";
         } else if (activeMode === "SAFE") {
@@ -1026,34 +1036,35 @@ async function syncBotStatus() {
         modeDesc.textContent = data.market_regime;
       }
 
+      const btnMirror = document.getElementById("risk-btn-user-mirror");
       const btnSafe = document.getElementById("risk-btn-safe");
       const btnBalanced = document.getElementById("risk-btn-balanced");
       const btnAggressive = document.getElementById("risk-btn-aggressive");
-      if (btnSafe && btnBalanced && btnAggressive) {
-        btnSafe.classList.toggle("active", activeMode === "SAFE");
-        btnBalanced.classList.toggle("active", activeMode === "BALANCED");
-        btnAggressive.classList.toggle("active", activeMode === "ALPHA" || activeMode === "AGGRESSIVE");
-      }
+      if (btnMirror) btnMirror.classList.toggle("active", activeMode === "USER_MIRROR");
+      if (btnSafe) btnSafe.classList.toggle("active", activeMode === "SAFE");
+      if (btnBalanced) btnBalanced.classList.toggle("active", activeMode === "BALANCED");
+      if (btnAggressive) btnAggressive.classList.toggle("active", activeMode === "ALPHA" || activeMode === "AGGRESSIVE");
     }
 
     const positions = (data.active_positions && Array.isArray(data.active_positions) && data.active_positions.length > 0)
       ? data.active_positions
       : (data.active_position ? [data.active_position] : []);
 
+    const maxSlots = data.max_slots || 10;
     if (positions.length > 0) {
-      elPosBadge.textContent = `ACTIVE (${positions.length}/3 SLOTS)`;
+      elPosBadge.textContent = `ACTIVE (${positions.length}/${maxSlots} SLOTS)`;
       elPosBadge.style.color = "#38bdf8";
 
       let posHtml = '<div class="active-positions-list">';
       positions.forEach(pos => {
         const isShort = (pos.direction || pos.side) === "SHORT";
         const isRunner = Boolean(pos.is_runner);
-        const lev = pos.leverage || 6;
-        const invested = Number(pos.invested || 150).toFixed(2);
+        const lev = pos.leverage || 4;
+        const invested = Number(pos.invested || 3000).toFixed(2);
         const qty = Number(pos.quantity || 0).toFixed(4);
         const target = pos.target ? formatPrice(pos.target) : "--";
         const stop = pos.trailing_stop ? formatPrice(pos.trailing_stop) : (pos.stop_loss ? formatPrice(pos.stop_loss) : "--");
-        const runnerTag = isRunner ? `<span class="badge-runner">⚡ RUNNER (+${pos.runner_target_pct || 25}% TP)</span>` : '';
+        const runnerTag = isRunner ? `<span class="badge-runner">⚡ RUNNER (+${pos.runner_target_pct || 28}% TP)</span>` : '';
 
         posHtml += `
           <div class="active-pos-card ${isShort ? 'short-pos' : 'long-pos'}">
@@ -1074,9 +1085,9 @@ async function syncBotStatus() {
       posHtml += '</div>';
       elPosDetails.innerHTML = posHtml;
     } else {
-      elPosBadge.textContent = "NO ACTIVE TRADES (0/3 SLOTS)";
+      elPosBadge.textContent = `NO ACTIVE TRADES (0/${maxSlots} SLOTS)`;
       elPosBadge.style.color = "#94a3b8";
-      elPosDetails.textContent = `Model Status: [${data.last_signal || 'AUTONOMOUS 24/7'}] - ${data.last_reason || 'Scanning 600+ coins'}`;
+      elPosDetails.textContent = `Model Status: [${data.last_signal || 'AUTONOMOUS 24/7'}] - ${data.last_reason || 'Scanning 700+ coins across 10 slots'}`;
     }
 
     if (data.performance_summary) {
@@ -1096,11 +1107,52 @@ async function syncBotStatus() {
   }
 }
 
-// Global Paper Trade State
+// Global Trade State (Paper vs Live View)
+let currentHistorySource = "PAPER";
+let liveTradeHistoryData = null;
 let allTradeHistory = [];
 let activeTradeFilter = "ALL";
 let activeDirectionFilter = "ALL";
 let lastRenderedTradesHash = "";
+
+async function setHistoryView(src) {
+  currentHistorySource = src;
+  const btnPaper = document.getElementById("btn-hist-paper");
+  const btnLive = document.getElementById("btn-hist-live");
+  if (btnPaper) {
+    btnPaper.style.background = src === "PAPER" ? "rgba(56, 189, 248, 0.2)" : "rgba(255, 255, 255, 0.06)";
+    btnPaper.style.color = src === "PAPER" ? "#38bdf8" : "#94a3b8";
+    btnPaper.style.borderColor = src === "PAPER" ? "rgba(56, 189, 248, 0.4)" : "rgba(255, 255, 255, 0.1)";
+  }
+  if (btnLive) {
+    btnLive.style.background = src === "LIVE" ? "rgba(16, 185, 129, 0.2)" : "rgba(255, 255, 255, 0.06)";
+    btnLive.style.color = src === "LIVE" ? "#34d399" : "#94a3b8";
+    btnLive.style.borderColor = src === "LIVE" ? "rgba(16, 185, 129, 0.4)" : "rgba(255, 255, 255, 0.1)";
+  }
+
+  if (src === "LIVE") {
+    if (!liveTradeHistoryData) {
+      try {
+        const res = await fetch("/api/live_trades");
+        if (res.ok) {
+          liveTradeHistoryData = await res.json();
+        }
+      } catch (e) {
+        console.error("Failed to load live trades:", e);
+      }
+    }
+    if (liveTradeHistoryData) {
+      updateTradePerformanceHUD(liveTradeHistoryData.summary);
+      allTradeHistory = liveTradeHistoryData.trades || [];
+      lastRenderedTradesHash = "";
+      renderTradeLogList();
+      return;
+    }
+  }
+
+  lastRenderedTradesHash = "";
+  syncBotStatus();
+}
 
 function updateTradePerformanceHUD(summary) {
   if (!summary) return;
@@ -1114,10 +1166,38 @@ function updateTradePerformanceHUD(summary) {
   const wins = Number(summary.wins || 0);
   const losses = Number(summary.losses || 0);
   const total = Number(summary.total_trades || 0);
+  const totalDeductions = Number(summary.total_deductions_inr || 0);
+  const totalGross = Number(summary.gross_pnl_inr || 0);
+  const totalTds = Number(summary.total_tds_inr || 0);
+  const totalTax = Number(summary.total_tax_inr || 0);
+  const totalFees = Number(summary.total_fees_inr || 0);
+
+  if (total === 0 && currentHistorySource === "PAPER") {
+    if (elNetPnl) {
+      elNetPnl.textContent = "INR +0.00";
+      elNetPnl.style.color = "#10b981";
+      elNetPnl.title = "Simulated Capital: ₹30,000.00 • Preserving 100% Cash until Diamond setup triggers";
+      const cell = elNetPnl.closest(".trade-hud-cell");
+      if (cell) cell.style.borderLeftColor = "#10b981";
+    }
+    if (elWinRate) {
+      elWinRate.textContent = "100% Target";
+      elWinRate.style.color = "#38bdf8";
+    }
+    if (elWinLoss) {
+      elWinLoss.textContent = "0W / 0L";
+    }
+    if (elTotalTrades) {
+      elTotalTrades.textContent = "0 / 10 Slots";
+      elTotalTrades.title = "Dynamic 10-slot manager active. Standing by for Diamond coins.";
+    }
+    return;
+  }
 
   if (elNetPnl) {
     elNetPnl.textContent = `INR ${netPnl >= 0 ? '+' : ''}${netPnl.toFixed(2)}`;
     elNetPnl.style.color = netPnl >= 0 ? "#10b981" : "#ef4444";
+    elNetPnl.title = `In-Pocket Net: INR ${netPnl.toFixed(2)}\nGross Market PnL: INR ${totalGross.toFixed(2)}\nExchange Fees (0.1%): -INR ${totalFees.toFixed(2)}\nTDS 1% (Sec 194S): -INR ${totalTds.toFixed(2)}\nGovt Tax 31.2% (Sec 115BBH): -INR ${totalTax.toFixed(2)}\nTotal Deductions: -INR ${totalDeductions.toFixed(2)}`;
     const cell = elNetPnl.closest(".trade-hud-cell");
     if (cell) cell.style.borderLeftColor = netPnl >= 0 ? "#10b981" : "#ef4444";
   }
@@ -1133,6 +1213,9 @@ function updateTradePerformanceHUD(summary) {
 
   if (elTotalTrades) {
     elTotalTrades.textContent = `${total} trades`;
+    if (totalDeductions > 0) {
+      elTotalTrades.title = `Total Govt Tax & Fees Deducted: INR ${totalDeductions.toFixed(2)}`;
+    }
   }
 }
 
@@ -1204,7 +1287,11 @@ function renderTradeLogList() {
   }
 
   if (!filtered || filtered.length === 0) {
-    elTradeLogList.innerHTML = `<div class="empty-trades">No ${activeTradeFilter !== 'ALL' ? activeTradeFilter.toLowerCase() : ''} ${activeDirectionFilter !== 'ALL' ? activeDirectionFilter.toLowerCase() + ' ' : ''}executions recorded yet.</div>`;
+    if (currentHistorySource === "PAPER") {
+      elTradeLogList.innerHTML = `<div class="empty-trades" id="empty-trades-banner">🎯 Diamond Sniper Armed & Standing By (₹30,000 Capital). 0/10 Slots Active. Strict 5-Timeframe Diamond Filter Active. 0 Trades Triggered Yet.</div>`;
+    } else {
+      elTradeLogList.innerHTML = `<div class="empty-trades">No ${activeTradeFilter !== 'ALL' ? activeTradeFilter.toLowerCase() : ''} ${activeDirectionFilter !== 'ALL' ? activeDirectionFilter.toLowerCase() + ' ' : ''}executions recorded yet.</div>`;
+    }
     return;
   }
 
@@ -1264,11 +1351,14 @@ function renderTradeLogList() {
           </div>
         </div>
 
-        ${(tpText || slText || reasonText || t.fee) ? `
+        ${(tpText || slText || reasonText || t.fee || t.tds || t.tax || t.gross_pnl !== undefined) ? `
           <div class="trade-card-bottom">
             ${tpText ? `<span class="pill-tp">TP: <b>${tpText}</b></span>` : ''}
             ${slText ? `<span class="pill-sl">SL: <b>${slText}</b></span>` : ''}
-            ${t.fee ? `<span class="pill-fee" title="CoinDCX Futures Taker Fee Deducted">Fee: -₹${Number(t.fee).toFixed(2)}</span>` : ''}
+            ${t.gross_pnl !== undefined && Number(t.gross_pnl) !== 0 ? `<span class="pill-gross" title="Gross Market PnL">Gross: ₹${Number(t.gross_pnl) >= 0 ? '+' : ''}${Number(t.gross_pnl).toFixed(2)}</span>` : ''}
+            ${t.fee ? `<span class="pill-fee" title="CoinDCX Futures Taker Fee (0.1% total)">Fee: -₹${Number(t.fee).toFixed(2)}</span>` : ''}
+            ${t.tds ? `<span class="pill-tds" title="1% Indian TDS under Section 194S">TDS 1%: -₹${Number(t.tds).toFixed(2)}</span>` : ''}
+            ${t.tax ? `<span class="pill-tax" title="Indian 31.2% Flat VDA Tax + Cess under Section 115BBH">Govt Tax: -₹${Number(t.tax).toFixed(2)}</span>` : ''}
             ${reasonText ? `<span class="pill-reason" title="${reasonText}">${reasonText}</span>` : ''}
           </div>
         ` : ''}
@@ -1459,19 +1549,36 @@ function updateCustomOrderSummary() {
   const tpInp = document.getElementById("custom-input-tp");
   const slInp = document.getElementById("custom-input-sl");
 
-  const margin = parseFloat(marginInp ? marginInp.value : 150) || 150;
-  const lev = parseInt(levInp ? levInp.value : 10) || 10;
-  const tp = parseFloat(tpInp ? tpInp.value : 4.5) || 4.5;
-  const sl = parseFloat(slInp ? slInp.value : 2.0) || 2.0;
+  const margin = parseFloat(marginInp ? marginInp.value : 3000) || 3000;
+  const lev = parseInt(levInp ? levInp.value : 22) || 22;
+  const tp = parseFloat(tpInp ? tpInp.value : 1.25) || 1.25;
+  const sl = parseFloat(slInp ? slInp.value : 0.0) || 0.0;
 
   const marginDisp = document.getElementById("term-margin-val-display");
-  if (marginDisp) marginDisp.textContent = `₹${margin.toFixed(2)}`;
+  if (marginDisp) marginDisp.textContent = `₹${margin.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   const levDisp = document.getElementById("term-leverage-display");
   if (levDisp) {
-    const label = lev <= 5 ? "Safe Buffer" : lev <= 10 ? "Sweetspot" : lev <= 25 ? "High Risk" : "Extreme";
+    let label = "Safe Buffer";
+    let color = "#38bdf8";
+    if (lev <= 8) {
+      label = "Safe Alt Buffer";
+      color = "#10b981";
+    } else if (lev <= 12) {
+      label = "Safe ETH Buffer";
+      color = "#38bdf8";
+    } else if (lev <= 22) {
+      label = "User Mirror Sweetspot";
+      color = "#a855f7";
+    } else if (lev <= 35) {
+      label = "High Risk";
+      color = "#f59e0b";
+    } else {
+      label = "Extreme Hazard";
+      color = "#ef4444";
+    }
     levDisp.textContent = `${lev}x (${label})`;
-    levDisp.style.color = lev <= 10 ? "#38bdf8" : lev <= 25 ? "#f59e0b" : "#ef4444";
+    levDisp.style.color = color;
   }
 
   const contractDisp = document.getElementById("term-preview-contract");
@@ -1487,10 +1594,18 @@ function updateCustomOrderSummary() {
   const profitDisp = document.getElementById("term-preview-profit");
   if (profitDisp) profitDisp.textContent = `+₹${profitInr.toFixed(2)} (+${profitRoi.toFixed(1)}% ROI)`;
 
-  const lossInr = margin * ((sl * lev) / 100.0);
-  const lossRisk = sl * lev;
   const lossDisp = document.getElementById("term-preview-loss");
-  if (lossDisp) lossDisp.textContent = `-₹${lossInr.toFixed(2)} (-${lossRisk.toFixed(1)}% Risk)`;
+  if (lossDisp) {
+    if (sl <= 0.05) {
+      lossDisp.textContent = `🛡️ Protected by Margin Defense (-65% Top-Up)`;
+      lossDisp.style.color = "#a855f7";
+    } else {
+      const lossInr = margin * ((sl * lev) / 100.0);
+      const lossRisk = sl * lev;
+      lossDisp.textContent = `-₹${lossInr.toFixed(2)} (-${lossRisk.toFixed(1)}% Risk)`;
+      lossDisp.style.color = "#ef4444";
+    }
+  }
 }
 
 async function executeCustomOrder() {
@@ -1499,10 +1614,10 @@ async function executeCustomOrder() {
   const tpInp = document.getElementById("custom-input-tp");
   const slInp = document.getElementById("custom-input-sl");
 
-  const margin_inr = parseFloat(marginInp ? marginInp.value : 150) || 150;
-  const leverage = parseInt(levInp ? levInp.value : 10) || 10;
-  const take_profit_pct = parseFloat(tpInp ? tpInp.value : 4.5) || 4.5;
-  const stop_loss_pct = parseFloat(slInp ? slInp.value : 2.0) || 2.0;
+  const margin_inr = parseFloat(marginInp ? marginInp.value : 3000) || 3000;
+  const leverage = parseInt(levInp ? levInp.value : 22) || 22;
+  const take_profit_pct = parseFloat(tpInp ? tpInp.value : 1.25) || 1.25;
+  const stop_loss_pct = parseFloat(slInp ? slInp.value : 0.0) || 0.0;
 
   try {
     const res = await fetch("/api/bot/manual_order", {
@@ -1826,19 +1941,23 @@ function updateRiskProfileUI(currentMode, profile) {
   const desc = document.getElementById("risk-mode-desc");
   const chunkVal = document.getElementById("card-trade-chunk");
 
-  ["safe", "balanced", "aggressive"].forEach(m => {
+  ["user-mirror", "safe", "balanced", "aggressive"].forEach(m => {
     const btn = document.getElementById(`risk-btn-${m}`);
     if (btn) {
-      if (m.toUpperCase() === currentMode) {
-        btn.classList.add("active");
-      } else {
-        btn.classList.remove("active");
-      }
+      const match = (m === "user-mirror" && currentMode === "USER_MIRROR") ||
+                    (m === "safe" && currentMode === "SAFE") ||
+                    (m === "balanced" && currentMode === "BALANCED") ||
+                    (m === "aggressive" && (currentMode === "AGGRESSIVE" || currentMode === "ALPHA"));
+      btn.classList.toggle("active", match);
     }
   });
 
   if (badge) {
-    if (currentMode === "SAFE") {
+    if (currentMode === "USER_MIRROR") {
+      badge.textContent = "USER_MIRROR (TP +1.25%)";
+      badge.style.background = "rgba(168, 85, 247, 0.25)";
+      badge.style.color = "#c084fc";
+    } else if (currentMode === "SAFE") {
       badge.textContent = "SAFE (25-35%)";
       badge.style.background = "rgba(16, 185, 129, 0.2)";
       badge.style.color = "#10b981";
@@ -1853,12 +1972,20 @@ function updateRiskProfileUI(currentMode, profile) {
     }
   }
 
-  if (desc && profile) {
-    desc.textContent = `${profile.description} Leverage: ${profile.leverage}x • Margin: ₹${profile.investment_inr} • Min Conf: ${profile.min_confidence}% • Target: +${profile.take_profit_pct}%`;
+  if (desc) {
+    if (currentMode === "USER_MIRROR") {
+      desc.textContent = "🎯 User Mirror Sniper (6x-22x Safe Lev, ₹200-₹500 TP, -65% Margin Defense, 30m Anti-Whipsaw Cooldown).";
+    } else if (profile) {
+      desc.textContent = `${profile.description} Leverage: ${profile.leverage}x • Margin: ₹${profile.investment_inr} • Min Conf: ${profile.min_confidence}% • Target: +${profile.take_profit_pct}%`;
+    }
   }
 
-  if (chunkVal && profile) {
-    chunkVal.textContent = `₹${profile.investment_inr} (${profile.leverage}x Lev)`;
+  if (chunkVal) {
+    if (currentMode === "USER_MIRROR") {
+      chunkVal.textContent = "₹3,000 / slot";
+    } else if (profile) {
+      chunkVal.textContent = `₹${profile.investment_inr} (${profile.leverage}x Lev)`;
+    }
   }
 }
 
@@ -2450,8 +2577,8 @@ async function runMarketScan(userTriggered = false) {
     scannerResults = signals;
 
     if (summaryEl) {
-      const ultraCount = signals.filter(s => s.probability >= 90).length;
-      summaryEl.innerHTML = `Scanned <b>739 USDT perpetual pairs</b> • Found <b>${signals.length} High-Probability setups</b> (<b>${ultraCount} Ultra 100% Setups</b>)`;
+      const ultraCount = signals.filter(s => s.probability >= 82).length;
+      summaryEl.innerHTML = `Scanned <b>739 USDT perpetual pairs</b> • Found <b>${signals.length} High-Probability setups</b> (<b>${ultraCount} High-Conviction Setups</b>)`;
     }
     if (timeEl) {
       const now = new Date();
@@ -2485,7 +2612,7 @@ function renderFilteredScannerCards() {
   let list = [...scannerResults];
 
   if (currentScannerFilter === "ultra") {
-    list = list.filter(s => s.probability >= 90);
+    list = list.filter(s => s.probability >= 82);
   } else if (currentScannerFilter === "up") {
     list = list.filter(s => s.direction === "UP");
   } else if (currentScannerFilter === "down") {
@@ -2504,7 +2631,7 @@ function renderScannerCards(items) {
   if (!items || items.length === 0) {
     container.innerHTML = `
       <div style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-muted);">
-        No setups matching current filter. Click "SCAN ALL 700+ CRYPTOS" to run a fresh scan.
+        No setups matching current filter. <button class="tool-action-btn" onclick="filterScannerResults('all')" style="margin-left:8px; display:inline-block; padding: 4px 10px; cursor: pointer;">Show All Signals</button>
       </div>
     `;
     return;
@@ -2512,7 +2639,7 @@ function renderScannerCards(items) {
 
   container.innerHTML = items.map(s => {
     const isUp = s.direction === "UP";
-    const isUltra = s.probability >= 90;
+    const isUltra = s.probability >= 85;
     const confluencesHtml = (s.confluences || []).slice(0, 3).map(c => `
       <div class="sc-conf-item">
         <span class="sc-conf-dot" style="background: ${isUp ? '#10b981' : '#ef4444'}"></span>

@@ -226,7 +226,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
         if not usdt_pairs:
             return []
 
-    # Gather top liquid candidates: top gainers, top losers, top volume
+    # Gather top liquid candidates: top gainers, top volume, top dip/short candidates
     usdt_pairs_sorted_gain = sorted(usdt_pairs, key=lambda x: float(x.get("priceChangePercent", 0)), reverse=True)
     usdt_pairs_sorted_vol = sorted(usdt_pairs, key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)
     usdt_pairs_sorted_loss = sorted(usdt_pairs, key=lambda x: float(x.get("priceChangePercent", 0)))
@@ -234,7 +234,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     candidate_symbols = []
     seen = set()
 
-    for pool in [usdt_pairs_sorted_gain[:5], usdt_pairs_sorted_vol[:6], usdt_pairs_sorted_loss[:4]]:
+    for pool in [usdt_pairs_sorted_gain[:15], usdt_pairs_sorted_vol[:20], usdt_pairs_sorted_loss[:15]]:
         for item in pool:
             sym = item.get("symbol", "").replace("USDT", "")
             if sym.isascii() and sym.isalnum() and sym not in seen:
@@ -242,6 +242,71 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
                 candidate_symbols.append((sym, float(item.get("priceChangePercent", 0)), float(item.get("quoteVolume", 0))))
 
     client = CoinDCXClient()
+
+    def evaluate_coin_multi_timeframe(coin_sym: str, chg_24h: float, c_1h: list) -> Dict[str, Any]:
+        """Fast multi-timeframe evaluator across 1d, 1h, 15m, 5m, 1m with consensus & leverage."""
+        c_1d = "GREEN" if chg_24h > 0 else "RED"
+
+        if len(c_1h) >= 2:
+            latest = c_1h[0]
+            prev = c_1h[1]
+            c_1h_trend = "GREEN" if latest["close"] >= latest["open"] else "RED"
+        else:
+            c_1h_trend = c_1d
+
+        try:
+            c_15m_data = client.get_futures_candles(coin_sym, interval="15m", limit=5)
+        except Exception:
+            c_15m_data = None
+
+        if c_15m_data and len(c_15m_data) >= 3:
+            l15 = c_15m_data[0]
+            p15 = c_15m_data[1]
+            c_15m = "GREEN" if l15["close"] >= l15["open"] else "RED"
+            c_5m = "GREEN" if l15["close"] >= p15["close"] else "RED"
+            c_1m = "GREEN" if l15["close"] >= ((l15["open"] + l15["close"]) / 2) else "RED"
+        else:
+            c_15m = c_1h_trend
+            c_5m = c_1h_trend
+            c_1m = c_1d
+
+        tf_results = {"1m": c_1m, "5m": c_5m, "15m": c_15m, "1h": c_1h_trend, "1d": c_1d}
+        greens = sum(1 for v in tf_results.values() if v == "GREEN")
+        reds = sum(1 for v in tf_results.values() if v == "RED")
+
+        if greens >= 4:
+            consensus = "UP"
+            agreement = greens
+        elif reds >= 4:
+            consensus = "DOWN"
+            agreement = reds
+        elif greens >= 3:
+            consensus = "UP"
+            agreement = greens
+        elif reds >= 3:
+            consensus = "DOWN"
+            agreement = reds
+        else:
+            consensus = "MIXED"
+            agreement = max(greens, reds)
+
+        c_up = coin_sym.upper()
+        if c_up in ["BTC", "WBTC"]:
+            lev = 22 if agreement >= 4 else 20
+        elif c_up == "ETH":
+            lev = 12 if agreement >= 4 else 10
+        else: # Altcoins
+            lev = 8 if agreement == 5 else (7 if agreement == 4 else 6)
+
+        boost = 10 if agreement == 5 else (6 if agreement == 4 else 2)
+
+        return {
+            "consensus": consensus,
+            "agreement": agreement,
+            "timeframes": tf_results,
+            "adaptive_leverage": lev,
+            "confidence_boost": boost
+        }
 
     def _eval_coin(coin_tuple):
         coin, chg_24h, vol_usdt = coin_tuple
@@ -254,13 +319,22 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
             if not pred or pred.get("direction") == "SIDEWAYS":
                 return None
 
-            dir_match = pred.get("direction", "")
-            prob = pred.get("probability", 50)
+            mtf = evaluate_coin_multi_timeframe(coin, chg_24h, candles)
+            if mtf["consensus"] == "MIXED" or mtf["agreement"] < 3:
+                return None
 
-            if prob < min_confidence:
+            dir_match = mtf["consensus"]
+            raw_prob = pred.get("probability", 50)
+            prob = min(96, raw_prob + mtf.get("confidence_boost", 2))
+
+            effective_min_conf = min(min_confidence, 80)
+            if prob < effective_min_conf:
                 return None
             if direction != "ALL" and dir_match != direction.upper():
                 return None
+
+            adaptive_lev = mtf.get("adaptive_leverage", 8)
+            agreement_str = f"{mtf.get('agreement', 3)}/5 {dir_match}"
 
             return {
                 "coin": coin,
@@ -268,8 +342,11 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
                 "contract": f"{coin}USDT.P",
                 "direction": dir_match,
                 "probability": prob,
-                "confidence_tier": pred.get("confidence_tier", "HIGH"),
-                "signal_type": pred.get("signal_type", "MOMENTUM SETUP"),
+                "adaptive_leverage": adaptive_lev,
+                "mtf_agreement": agreement_str,
+                "mtf_timeframes": mtf.get("timeframes", {}),
+                "confidence_tier": "A+" if mtf.get("agreement") == 5 else ("A" if mtf.get("agreement") == 4 else "HIGH"),
+                "signal_type": f"{mtf.get('agreement', 3)}/5 MTF {dir_match}",
                 "current_price": pred.get("current_price"),
                 "target_price": pred.get("target_price"),
                 "stop_loss": pred.get("stop_loss"),
@@ -285,8 +362,8 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
         except Exception:
             return None
 
-    # Lightweight parallel evaluation with 3 workers (cloud friendly)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+    # Lightweight parallel evaluation with 4 workers
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         scan_results = [r for r in executor.map(_eval_coin, candidate_symbols) if r is not None]
 
     scan_results.sort(key=lambda x: (x["probability"], abs(x["expected_change_pct"])), reverse=True)

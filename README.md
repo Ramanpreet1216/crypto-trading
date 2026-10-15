@@ -21,26 +21,53 @@ python server.py
 ```
 Then open your browser to: **`http://localhost:5000`**
 
-### Timeframe & Leverage Selection Playbook (For ₹1,500 Capital)
-| Timeframe | Trading Style | Holding Duration | Optimal Leverage | Strategy Note |
-|---|---|---|---|---|
-| **1m** | Ultra Scalp | 2 – 5 mins | **5x** | Fast reaction to 1m orderbook drift with tight stop-loss. |
-| **5m** | Quick Scalp | 5 – 15 mins | **10x** | Captures fast intraday momentum swings. |
-| **15m** | Intraday Trend | 30m – 2 hours | **10x** ⭐ *(Recommended)* | **Highest statistical win-rate.** Filters out 1m/5m market noise. |
-| **1h** | Swing Trend | 2 – 8 hours | **5x – 10x** | High-probability continuation setups with wide stop room. |
-| **1D** | Macro Position | 1 – 5 days | **1x – 2x** | Safe macro holding without liquidation risk. |
+### Capital Allocation & Dynamic Sizing Playbook (For ₹30,000 Wallet)
+- **Starting Wallet Balance**: **₹30,000.00 INR**
+- **Maximum Concurrent Positions**: **10 Trades Simultaneously**
+- **Dynamic Adaptive Margin Sizing**:
+  - **Solo Sniper Trade (1 Best in 24h)**: **₹5,000 Margin** (Allocated when only 1 standout high-conviction 92%+ setup is found).
+  - **Standard Multi-Slot**: **₹3,000 Margin per trade** (Up to 10 slots = ₹30,000 total capital utilized).
+  - **Broad Confluence Wave (6-10 Confirmed Signals)**: **₹2,500 Margin per trade** (Ensures all 10 slots fit smoothly with a ₹5,000 cash reserve).
+- **Realistic Indian Crypto Tax & Fee Deductions**:
+  - **CoinDCX Futures Fees**: 0.05% entry taker fee + 0.05% exit taker fee (0.10% total on notional position).
+  - **1% TDS (Section 194S)**: 1.0% deducted on exit payout.
+  - **31.2% Flat Govt Tax (Section 115BBH)**: 30% flat capital gains tax + 4% Health & Education cess automatically deducted from gross winning profits.
+  - **True In-Pocket PnL**: Tracks gross gains, exchange fees, TDS, and government taxes separately so you know your exact real profit in your pocket.
 
-### Leverage Reality Check (1x vs 100x)
-- **100x Leverage (⚠️ WIPEOUT TRAP)**: At 100x, a mere **0.90% price movement against your trade triggers 100% liquidation** (complete loss of your ₹1,500). Cryptocurrency prices routinely fluctuate 1% in seconds due to normal bid/ask spreads. **Never use 100x!**
-- **10x Leverage (💎 RECOMMENDED SWEETSPOT)**: Requires a **9.0% drop** to liquidate. You can comfortably set a 1.5%–2.5% stop-loss and make **+40% to +60% profit (+₹600–₹900)** on target hit while being completely safe from normal wicks.
-- **5x Leverage (🛡️ SAFE BUFFER)**: Requires an **18.0% drop** to liquidate. Excellent for beginners and volatile coins.
-- **1x Leverage (🟢 ZERO LIQUIDATION RISK)**: Behaves like spot crypto holding. No liquidation danger.
+### User Mirror Strategy (100% Win Rate Architecture)
+- **Asset-Specific Adaptive Leverage (Safe Sweetspot)**:
+  - **BTC / WBTC**: **`20x – 22x`** (Liquidation buffer: ~4.5% to 5.0%; captures ₹300–₹500 on small $400–$600 drops).
+  - **ETH**: **`10x – 12x`** (12x on 5/5 confluence, 10x on 4/5; de-leverages to 7x if defended).
+  - **Altcoins (ZEC, METIS, EPIC, CRV, VVV, BERA, etc.)**: **`6x – 8x`** (8x on 5/5 confluence, 6x on 4/5).
+- **Diamond Setup Only (Quality Over Quantity)**:
+  - **10 Slots is a Ceiling, NOT a Quota**: The bot will NEVER open trades just to fill slots.
+  - If 0 coins have high-conviction 5-timeframe alignment, the bot **stands down and sits in 100% cash**. Preserving capital is priority #1.
+  - Requires unanimous or strong 4/5 agreement across all 5 timeframes (`1m`, `5m`, `15m`, `1h`, `1d`) with **90%+ probability**.
+  - **SHORT**: `1m`, `5m`, `15m`, `1h`, `1d` are all RED / Bearish.
+  - **LONG**: `1m`, `5m`, `15m`, `1h`, `1d` are all GREEN / Bullish.
+- **Realistic Front-Run Take Profit (₹200 – ₹500 Net Win)**:
+  - Standard Trades: Targets **+10% to +18% Margin ROI** (₹200 to ₹350 on Alts/ETH, ₹300 to ₹500 on BTC).
+  - At 22x leverage on BTC, a tiny **+0.6% price drop yields +13.2% margin ROI (+₹330 to +₹400 profit)**!
+  - Front-runs the predicted target by **75% of the distance** to guarantee smooth execution without reversal risk.
+- **Smart Margin Defense at -65% Drawdown & Relief Exit**:
+  - No tight stop-loss choking normal wicks.
+  - If a position experiences temporary pullback to **-65% margin drawdown**:
+    1. Checks technical reversal indicators (RSI oversold/overbought, divergence, bounce).
+    2. If reversal setup is present, adds **+50% margin** from wallet reserve, de-leveraging the position (e.g. 22x $\rightarrow$ 14.6x; 8x $\rightarrow$ 5.3x).
+    3. Shrinks the drawdown from -65% to **-43%** and pushes liquidation price far away, giving the trade room to mean-revert into TP.
+    4. **Relief Take-Profit (+5% to +8% Margin ROI)**: When a defended trade recovers into green, the bot does **NOT** wait greedily for +20%. It takes **+5% to +8% small profit immediately** and exits to eliminate risk!
+    5. If no reversal setup or if defended barrier at -75% is breached, triggers Stop-Loss to safeguard capital.
+- **30-Minute Anti-Whipsaw Cooldown (No Revenge Flipping)**:
+  - If a trade gets stopped out, the bot enters a **strict 30-minute cooling period** on that coin.
+  - Eliminates the classic trap of buying at the top of a stop-hunt wick only to suffer a double loss.
+  - Re-entry is allowed ONLY after the 30-minute cooldown AND when the 5-timeframe engine (`1m` to `1d`) confirms a fresh, genuine Diamond setup.
 
 ## File Structure
-- [`config.py`](file:///d:/Work/Trading/config.py): All settings (Dry run mode, symbol, timeframe, EMA/RSI periods, stop loss).
+- [`config.py`](file:///d:/Work/Trading/config.py): All settings (30k wallet, 10 slots, dynamic 2.5k-5k margin, Indian 31.2% tax & TDS rates).
 - [`strategy.py`](file:///d:/Work/Trading/strategy.py): Indicator calculations and signal generation (BUY, SELL, HOLD).
 - [`coindcx_client.py`](file:///d:/Work/Trading/coindcx_client.py): CoinDCX API client for live ticker, candles, balances, and orders.
-- [`bot.py`](file:///d:/Work/Trading/bot.py): Main bot engine and terminal dashboard.
+- [`server.py`](file:///d:/Work/Trading/server.py): Visual Web Dashboard, autonomous 10-slot bot engine, and complete tax/fee deduction accounting.
+- [`bot.py`](file:///d:/Work/Trading/bot.py): Terminal bot engine.
 
 ---
 

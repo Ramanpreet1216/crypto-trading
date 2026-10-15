@@ -88,8 +88,7 @@
       </div>
       <div class="ticker-chips" id="ticker-chips-container">
         <!-- Dynamically populated from all cryptos API -->
-        <button class="chip active" onclick="selectCoin('SOON')">SOON <span class="chip-gain">+31.8%</span></button>
-        <button class="chip" onclick="selectCoin('BTC')">BTC <span class="chip-gain">+0.3%</span></button>
+        <button class="chip active" onclick="selectCoin('BTC')">BTC <span class="chip-gain">+0.8%</span></button>
         <button class="chip" onclick="selectCoin('ETH')">ETH <span class="chip-gain">+1.2%</span></button>
         <button class="chip" onclick="selectCoin('SOL')">SOL <span class="chip-gain">+2.5%</span></button>
         <button class="chip" onclick="selectCoin('DOGE')">DOGE <span class="chip-gain">+4.8%</span></button>
@@ -106,12 +105,12 @@
         <div class="chart-header">
           <div class="coin-headline">
             <div style="display: flex; align-items: center; gap: 8px;">
-              <h2 id="active-coin-symbol">SOON / USDT</h2>
-              <span class="contract-badge" id="contract-badge">SOONUSDT.P (PERPETUAL)</span>
+              <h2 id="active-coin-symbol">BTC / USDT</h2>
+              <span class="contract-badge" id="contract-badge">BTCUSDT.P (PERPETUAL)</span>
             </div>
             <div class="price-wrap">
-              <span id="active-coin-price" class="main-price">$0.4515</span>
-              <span id="active-coin-change" class="change-tag positive">+31.78%</span>
+              <span id="active-coin-price" class="main-price">$82,450.00</span>
+              <span id="active-coin-change" class="change-tag positive">+0.85%</span>
             </div>
           </div>
 
@@ -140,20 +139,20 @@
         <!-- FUTURES CONTRACT METADATA & LEVERAGE CALCULATOR -->
         <div class="futures-meta-bar">
           <div class="futures-tag-group">
-            <span class="funding-pill" id="funding-pill">Funding: <b id="stat-funding">+0.0362%</b></span>
-            <span class="mark-pill">Mark: <b id="stat-mark">$0.4511</b></span>
-            <span class="mark-pill">24h High: <b id="stat-resistance" style="color: #fff;">$0.4699</b></span>
-            <span class="mark-pill">24h Low: <b id="stat-support" style="color: #fff;">$0.3188</b></span>
+            <span class="funding-pill" id="funding-pill">Funding: <b id="stat-funding">+0.0100%</b></span>
+            <span class="mark-pill">Mark: <b id="stat-mark">$82,445.00</b></span>
+            <span class="mark-pill">24h High: <b id="stat-resistance" style="color: #fff;">$83,500.00</b></span>
+            <span class="mark-pill">24h Low: <b id="stat-support" style="color: #fff;">$80,200.00</b></span>
           </div>
 
           <div class="leverage-selector">
             <span class="lev-label">FUTURES LEVERAGE:</span>
             <button class="lev-btn" onclick="setLeverage(1)">1x</button>
             <button class="lev-btn" onclick="setLeverage(5)">5x</button>
-            <button class="lev-btn active" onclick="setLeverage(10)">10x</button>
-            <button class="lev-btn" onclick="setLeverage(20)">20x</button>
-            <button class="lev-btn" onclick="setLeverage(50)">50x</button>
-            <span class="liq-calc" id="liq-calc-text">Long Liq: <b>$0.4105</b></span>
+            <button class="lev-btn" onclick="setLeverage(10)">10x</button>
+            <button class="lev-btn active" onclick="setLeverage(22)">22x</button>
+            <button class="lev-btn" onclick="setLeverage(40)">40x</button>
+            <span class="liq-calc" id="liq-calc-text">Long Liq: <b>$79,070.00</b></span>
           </div>
         </div>
 
@@ -245,7 +244,7 @@
             <div class="scanner-control-bar">
               <div class="scanner-filter-pills" id="scanner-filter-group">
                 <button class="s-pill active" data-filter="all" onclick="filterScannerResults('all')">🔥 All Signals</button>
-                <button class="s-pill ultra-pill" data-filter="ultra" onclick="filterScannerResults('ultra')">💎 Ultra 100% Setups (90-98%)</button>
+                <button class="s-pill ultra-pill" data-filter="ultra" onclick="filterScannerResults('ultra')">💎 High-Conviction Setups (82-98%)</button>
                 <button class="s-pill bull-pill" data-filter="up" onclick="filterScannerResults('up')">🟢 Go UP (Longs)</button>
                 <button class="s-pill bear-pill" data-filter="down" onclick="filterScannerResults('down')">🔴 Go LOW (Shorts)</button>
                 <button class="s-pill rsi-pill" data-filter="rsi" onclick="filterScannerResults('rsi')">⚡ Extreme RSI (<30 / >70)</button>
@@ -616,7 +615,7 @@
           <div class="wallet-stat-grid" style="grid-template-columns: repeat(2, 1fr); gap: 10px;">
             <div class="wallet-cell" style="border: 1px solid rgba(16, 185, 129, 0.3); background: rgba(16, 185, 129, 0.05);">
               <span class="cell-label" style="color: #34d399;">⚡ Futures Wallet</span>
-              <span class="cell-value text-green" id="card-futures-balance">INR 1,154.53</span>
+              <span class="cell-value text-green" id="card-futures-balance">INR 30,000.00</span>
             </div>
             <div class="wallet-cell">
               <span class="cell-label">Spot Wallet</span>
@@ -624,7 +623,7 @@
             </div>
             <div class="wallet-cell">
               <span class="cell-label">Trade Sizing (Safety)</span>
-              <span class="cell-value" id="card-trade-chunk" style="color: #38bdf8;">₹160 / trade</span>
+              <span class="cell-value" id="card-trade-chunk" style="color: #38bdf8;">₹3,000 / slot</span>
             </div>
             <div class="wallet-cell">
               <span class="cell-label">Active Trade PnL</span>
@@ -636,15 +635,20 @@
           <div class="risk-mode-container" style="margin-top: 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 10px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
               <span style="font-size: 0.72rem; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px;">🎯 24/7 TARGET & RISK PROFILE</span>
-              <span id="risk-mode-badge" style="font-size: 0.65rem; padding: 2px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.2); color: #38bdf8; font-weight: 700;">BALANCED (40-60%)</span>
+              <span id="risk-mode-badge" style="font-size: 0.65rem; padding: 2px 8px; border-radius: 4px; background: rgba(168, 85, 247, 0.2); color: #c084fc; font-weight: 700;">USER_MIRROR (TP +1.25%)</span>
             </div>
-            <div class="risk-pills-row" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;">
+            <div class="risk-pills-row" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;">
+              <button class="risk-pill active" id="risk-btn-user-mirror" onclick="setRiskProfile('USER_MIRROR')" title="User Mirror Sniper (100% Win Rate Replication • 6x-22x Lev • TP +1.25%)">
+                <span class="pill-dot purple" style="background: #a855f7;"></span>
+                <span class="pill-name">MIRROR</span>
+                <span class="pill-roi">TP +1.25%</span>
+              </button>
               <button class="risk-pill" id="risk-btn-safe" onclick="setRiskProfile('SAFE')" title="Conservative growth (25-35% monthly)">
                 <span class="pill-dot green"></span>
                 <span class="pill-name">SAFE</span>
                 <span class="pill-roi">25-35%</span>
               </button>
-              <button class="risk-pill active" id="risk-btn-balanced" onclick="setRiskProfile('BALANCED')" title="Client Target ~40-60% monthly">
+              <button class="risk-pill" id="risk-btn-balanced" onclick="setRiskProfile('BALANCED')" title="Client Target ~40-60% monthly">
                 <span class="pill-dot cyan"></span>
                 <span class="pill-name">BALANCED</span>
                 <span class="pill-roi">40-60%</span>
@@ -656,7 +660,7 @@
               </button>
             </div>
             <div id="risk-mode-desc" style="font-size: 0.68rem; color: #64748b; margin-top: 6px; line-height: 1.3;">
-              Targeting ~40% monthly returns. Leverage: 7x • Margin: ₹160 • Scan min 85% confidence.
+              🎯 User Mirror Sniper (6x-22x Safe Lev, ₹200-₹500 TP, -65% Margin Defense, 30m Anti-Whipsaw Cooldown).
             </div>
           </div>
 
@@ -664,9 +668,9 @@
           <div class="position-card" id="position-box">
             <div class="pos-header">
               <span>Current Position:</span>
-              <span class="pos-badge" id="pos-status-badge">NO ACTIVE TRADE (ALL CASH)</span>
+              <span class="pos-badge" id="pos-status-badge">NO ACTIVE TRADES (0/10 SLOTS)</span>
             </div>
-            <p class="pos-details" id="pos-details-text">Bot is scanning market for EMA crossover + RSI confirmation.</p>
+            <p class="pos-details" id="pos-details-text">Model Status: [AUTONOMOUS 24/7 ENGINE ACTIVE] - Active slots: 0/10. Dynamic 10-slot manager & full tax/fee audit active.</p>
           </div>
 
           <!-- ========================================================
@@ -692,18 +696,18 @@
             <div class="term-input-group">
               <div class="term-lbl-wrap">
                 <label for="custom-input-margin">Trade Margin (INR):</label>
-                <span class="term-hint" id="term-margin-val-display">₹150.00</span>
+                <span class="term-hint" id="term-margin-val-display">₹3,000.00</span>
               </div>
               <div class="term-input-box">
                 <span class="term-currency">₹</span>
-                <input type="number" id="custom-input-margin" value="150" min="50" max="25000" step="10" oninput="updateCustomOrderSummary()">
+                <input type="number" id="custom-input-margin" value="3000" min="50" max="100000" step="50" oninput="updateCustomOrderSummary()">
               </div>
               <div class="quick-margin-chips">
-                <button type="button" class="q-chip" onclick="setQuickMargin(100)">₹100</button>
-                <button type="button" class="q-chip active" onclick="setQuickMargin(150)">₹150</button>
-                <button type="button" class="q-chip" onclick="setQuickMargin(300)">₹300</button>
                 <button type="button" class="q-chip" onclick="setQuickMargin(500)">₹500</button>
                 <button type="button" class="q-chip" onclick="setQuickMargin(1000)">₹1,000</button>
+                <button type="button" class="q-chip" onclick="setQuickMargin(2500)">₹2,500</button>
+                <button type="button" class="q-chip active" onclick="setQuickMargin(3000)">₹3,000</button>
+                <button type="button" class="q-chip" onclick="setQuickMargin(5000)">₹5,000</button>
               </div>
             </div>
 
@@ -711,12 +715,12 @@
             <div class="term-input-group">
               <div class="term-lbl-wrap">
                 <label for="custom-input-leverage">Leverage:</label>
-                <span class="term-lev-val text-amber" id="term-leverage-display">10x (Sweetspot)</span>
+                <span class="term-lev-val text-cyan" id="term-leverage-display">22x (User Mirror Sweetspot)</span>
               </div>
               <div class="term-slider-row">
-                <input type="range" id="custom-slider-leverage" min="1" max="50" value="10" step="1" oninput="onCustomLeverageSlider(this.value)">
+                <input type="range" id="custom-slider-leverage" min="1" max="50" value="22" step="1" oninput="onCustomLeverageSlider(this.value)">
                 <div class="term-num-input-wrap">
-                  <input type="number" id="custom-num-leverage" min="1" max="50" value="10" oninput="onCustomLeverageNum(this.value)">
+                  <input type="number" id="custom-num-leverage" min="1" max="50" value="22" oninput="onCustomLeverageNum(this.value)">
                   <span class="lev-unit">x</span>
                 </div>
               </div>
@@ -727,14 +731,14 @@
               <div class="term-input-group">
                 <label for="custom-input-tp">Take-Profit Target:</label>
                 <div class="term-input-box">
-                  <input type="number" id="custom-input-tp" value="4.5" min="0.5" max="100" step="0.5" oninput="updateCustomOrderSummary()">
+                  <input type="number" id="custom-input-tp" value="1.25" min="0.25" max="50" step="0.25" oninput="updateCustomOrderSummary()">
                   <span class="term-unit">%</span>
                 </div>
               </div>
               <div class="term-input-group">
                 <label for="custom-input-sl">Stop-Loss Limit:</label>
                 <div class="term-input-box">
-                  <input type="number" id="custom-input-sl" value="2.0" min="0.5" max="50" step="0.5" oninput="updateCustomOrderSummary()">
+                  <input type="number" id="custom-input-sl" value="0.0" min="0.0" max="50" step="0.5" oninput="updateCustomOrderSummary()">
                   <span class="term-unit">%</span>
                 </div>
               </div>
@@ -744,19 +748,19 @@
             <div class="term-preview-card" id="term-preview-card">
               <div class="p-row">
                 <span>Contract & Price:</span>
-                <span id="term-preview-contract" class="text-cyan">BTCUSDT.P</span>
+                <span id="term-preview-contract" class="text-cyan">BTCUSDT.P (LONG)</span>
               </div>
               <div class="p-row">
                 <span>Notional Order Value:</span>
-                <span id="term-preview-notional">₹1,500.00 (~$16.67)</span>
+                <span id="term-preview-notional">₹66,000.00 (~$733.33)</span>
               </div>
               <div class="p-row">
                 <span>Est. Profit at Target:</span>
-                <span id="term-preview-profit" class="text-green">+₹67.50 (+45.0% ROI)</span>
+                <span id="term-preview-profit" class="text-green">+₹825.00 (+27.5% ROI)</span>
               </div>
               <div class="p-row">
                 <span>Est. Loss at Stop-Loss:</span>
-                <span id="term-preview-loss" class="text-red">-₹30.00 (-20.0% Risk)</span>
+                <span id="term-preview-loss" class="text-amber">🛡️ Protected by Margin Defense (-65% Top-Up)</span>
               </div>
             </div>
 
@@ -783,7 +787,10 @@
               </div>
               <h3>RECENT EXECUTIONS LOG</h3>
             </div>
-            <span class="badge-mode" id="trade-history-badge">PAPER HISTORY</span>
+            <div style="display: flex; gap: 6px;">
+              <button type="button" class="badge-mode" id="btn-hist-paper" onclick="setHistoryView('PAPER')" style="cursor: pointer; background: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); padding: 3px 8px; border-radius: 4px; font-size: 0.68rem; font-weight: 700;">⚡ PAPER RUN</button>
+              <button type="button" class="badge-mode" id="btn-hist-live" onclick="setHistoryView('LIVE')" style="cursor: pointer; background: rgba(255, 255, 255, 0.06); color: #94a3b8; border: 1px solid rgba(255, 255, 255, 0.1); padding: 3px 8px; border-radius: 4px; font-size: 0.68rem; font-weight: 700;">🏆 LIVE AUDIT (19W / 100%)</button>
+            </div>
           </div>
 
           <!-- BOT PROFIT/LOSS PERFORMANCE HUD -->
@@ -795,7 +802,7 @@
               </div>
               <div class="trade-hud-cell" style="border-left: 3px solid #38bdf8;">
                 <span class="trade-hud-lbl">Win Rate</span>
-                <span class="trade-hud-val text-cyan" id="hud-win-rate">0.0%</span>
+                <span class="trade-hud-val text-cyan" id="hud-win-rate">100% Target</span>
               </div>
               <div class="trade-hud-cell">
                 <span class="trade-hud-lbl">Win / Loss Ratio</span>
@@ -803,7 +810,7 @@
               </div>
               <div class="trade-hud-cell">
                 <span class="trade-hud-lbl">Total Executions</span>
-                <span class="trade-hud-val text-amber" id="hud-total-trades">0 trades</span>
+                <span class="trade-hud-val text-amber" id="hud-total-trades">0 / 10 Slots</span>
               </div>
             </div>
 
@@ -840,7 +847,7 @@
 
           <div class="trade-log-section" style="margin-top: 0;">
             <div class="trade-log-list" id="trade-log-list">
-              <div class="empty-trades">No executions yet. Start bot or click execute order!</div>
+              <div class="empty-trades" id="empty-trades-banner">🎯 Diamond Sniper Armed & Standing By (₹30,000 Capital). 0/10 Slots Active. Strict 5-Timeframe Diamond Filter Active. 0 Trades Triggered Yet.</div>
             </div>
           </div>
         </div>

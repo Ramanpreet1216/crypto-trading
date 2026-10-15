@@ -22,7 +22,7 @@ class TradingBot:
     def __init__(self):
         self.client = CoinDCXClient()
         self.current_position = None
-        self.paper_balance_inr = 1500.0  # Initial paper balance
+        self.paper_balance_inr = getattr(config, "STARTING_WALLET_INR", 30000.0)  # Initial paper balance
         self.total_trades = 0
         self.winning_trades = 0
         self.losing_trades = 0
@@ -33,7 +33,7 @@ class TradingBot:
             try:
                 with open(TRADES_LOG_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    self.paper_balance_inr = data.get("balance_inr", 1500.0)
+                    self.paper_balance_inr = data.get("paper_balance", data.get("balance_inr", 30000.0))
                     self.current_position = data.get("current_position", None)
                     return data.get("trades", [])
             except Exception:
