@@ -345,12 +345,6 @@ def bot_worker():
                     pos_dir = pos.get("direction") or pos.get("side", "LONG")
                     buy_price = float(pos.get("buy_price", 0))
 
-                    # 30-second minimum maturation buffer before exit check
-                    pos_age = now_ts - float(pos.get("entry_time", now_ts))
-                    if pos_age < 30:
-                        active_pos_summaries.append(f"{pos_dir} {pos_symbol}: Maturing ({int(30 - pos_age)}s)")
-                        continue
-
                     # Fetch live mark price from CoinDCX ticker, fallback to candles
                     current_price = buy_price
                     try:
@@ -378,7 +372,40 @@ def bot_worker():
                     peak_pnl = max(float(pos.get("peak_pnl_pct", gross_pnl_pct)), gross_pnl_pct)
                     pos["peak_pnl_pct"] = peak_pnl
 
+                    # Calculate -65% margin defense level and target TP %
+                    sl_defense = round(buy_price * (1.0 - (0.65 / pos_lev)), precision) if pos_dir == "LONG" else round(buy_price * (1.0 + (0.65 / pos_lev)), precision)
+                    pos["sl_defense_price"] = sl_defense
+
+                    target_p = float(pos.get("target") or (buy_price * 1.02))
+                    tp_pct = ((target_p - buy_price) / max(1e-6, buy_price)) * 100.0 * pos_lev if pos_dir == "LONG" else ((buy_price - target_p) / max(1e-6, buy_price)) * 100.0 * pos_lev
+                    pos["tp_target_pct"] = round(tp_pct, 2)
+
                     # ----------------------------------------------------------
+                    # FINANCIAL RECONCILIATION & DEDUCTIONS
+                    # ----------------------------------------------------------
+                    invested = float(pos.get("invested", invest_target))
+                    gross_pnl = invested * (gross_pnl_pct / 100.0)
+                    deductions = calculate_trade_deductions(invested, pos_lev, gross_pnl)
+                    trade_fee = deductions["exchange_fee"]
+                    trade_tds = deductions["tds"]
+                    trade_tax = deductions["govt_tax"]
+                    total_cut = deductions["total_deductions"]
+                    net_pnl = deductions["net_pnl"]
+                    net_pnl_pct = deductions["net_pnl_pct"]
+
+                    # Populate live metrics for real-time frontend distance bar
+                    pos["current_price"] = round(current_price, precision)
+                    pos["gross_pnl_pct"] = round(gross_pnl_pct, 2)
+                    pos["net_pnl"] = round(net_pnl, 2)
+                    pos["net_pnl_pct"] = round(net_pnl_pct, 2)
+
+                    # 30-second minimum maturation buffer before exit triggers
+                    pos_age = now_ts - float(pos.get("entry_time", now_ts))
+                    if pos_age < 30:
+                        runner_tag = " [⚡RUNNER]" if pos.get("is_runner") else ""
+                        active_pos_summaries.append(f"{pos_dir} {pos_symbol}{runner_tag}: Maturing ({int(30 - pos_age)}s, Net {net_pnl_pct:+.1f}%)")
+                        continue
+
                     # ----------------------------------------------------------
                     # ASYMMETRIC ANTI-CHOKE PROFIT RATCHET (3.5:1+ RISK:REWARD)
                     # ----------------------------------------------------------
@@ -436,19 +463,6 @@ def bot_worker():
                             pos["trailing_stop"] = trail_price
                         elif pos_dir == "SHORT" and (cur_trail == 0 or trail_price < cur_trail):
                             pos["trailing_stop"] = trail_price
-
-                    # ----------------------------------------------------------
-                    # FINANCIAL RECONCILIATION & DEDUCTIONS
-                    # ----------------------------------------------------------
-                    invested = float(pos.get("invested", invest_target))
-                    gross_pnl = invested * (gross_pnl_pct / 100.0)
-                    deductions = calculate_trade_deductions(invested, pos_lev, gross_pnl)
-                    trade_fee = deductions["exchange_fee"]
-                    trade_tds = deductions["tds"]
-                    trade_tax = deductions["govt_tax"]
-                    total_cut = deductions["total_deductions"]
-                    net_pnl = deductions["net_pnl"]
-                    net_pnl_pct = deductions["net_pnl_pct"]
 
                     # ----------------------------------------------------------
                     # SMART MARGIN DEFENSE AT -65% DRAWDOWN (DE-LEVERAGE BUFFER)
@@ -583,6 +597,8 @@ def bot_worker():
                 max_slots = getattr(config, "MAX_OPEN_POSITIONS", 10)
                 if active_pos_summaries:
                     bot_state["last_reason"] = f"Slots ({len(bot_state['active_positions'])}/{max_slots}): " + " | ".join(active_pos_summaries)
+                if bot_state.get("active_positions"):
+                    save_active_positions(bot_state["active_positions"])
 
                 # ==============================================================
                 # PHASE 2: SCAN & OPEN POSITIONS (UP TO 10 SLOTS DYNAMICALLY)

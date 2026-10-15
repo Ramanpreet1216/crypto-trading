@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-10-16T00:31:13.151048",
+  "updated_at": "2026-10-16T00:49:55.258718",
   "paper_balance": 4999.07,
   "starting_balance": 30000.0,
   "max_slots": 10,
@@ -175,11 +175,17 @@
       "margin_defended": false,
       "peak_price": 0.08824,
       "valley_price": 0.08824,
-      "peak_pnl_pct": 0.0,
+      "peak_pnl_pct": 11.899365367180428,
       "probability": 96,
       "mtf_agreement": "4/5 DOWN",
       "entry_time": 1792090870.763761,
-      "time": "00:31:10"
+      "time": "00:31:10",
+      "sl_defense_price": 0.096434,
+      "tp_target_pct": 10.0,
+      "current_price": 0.08751,
+      "gross_pnl_pct": 5.79,
+      "net_pnl": 55.15,
+      "net_pnl_pct": 2.21
     },
     {
       "symbol": "ZRO",
@@ -195,11 +201,17 @@
       "margin_defended": false,
       "peak_price": 2.125,
       "valley_price": 2.125,
-      "peak_pnl_pct": 0.0,
+      "peak_pnl_pct": 6.776470588235217,
       "probability": 96,
       "mtf_agreement": "5/5 UP",
       "entry_time": 1792090871.0074606,
-      "time": "00:31:11"
+      "time": "00:31:11",
+      "sl_defense_price": 1.9523,
+      "tp_target_pct": 42.16,
+      "current_price": 2.143,
+      "gross_pnl_pct": 6.78,
+      "net_pnl": 69.18,
+      "net_pnl_pct": 2.77
     },
     {
       "symbol": "RLC",
@@ -215,11 +227,17 @@
       "margin_defended": false,
       "peak_price": 0.8841,
       "valley_price": 0.8841,
-      "peak_pnl_pct": 0.0,
+      "peak_pnl_pct": 7.44259699129055,
       "probability": 96,
       "mtf_agreement": "4/5 DOWN",
       "entry_time": 1792090871.2367284,
-      "time": "00:31:11"
+      "time": "00:31:11",
+      "sl_defense_price": 0.966195,
+      "tp_target_pct": 10.0,
+      "current_price": 0.876,
+      "gross_pnl_pct": 6.41,
+      "net_pnl": 65.63,
+      "net_pnl_pct": 2.63
     },
     {
       "symbol": "TIA",
@@ -239,7 +257,13 @@
       "probability": 96,
       "mtf_agreement": "5/5 UP",
       "entry_time": 1792090871.4629097,
-      "time": "00:31:11"
+      "time": "00:31:11",
+      "sl_defense_price": 0.539031,
+      "tp_target_pct": 30.37,
+      "current_price": 0.5848,
+      "gross_pnl_pct": -2.59,
+      "net_pnl": -108.86,
+      "net_pnl_pct": -4.35
     },
     {
       "symbol": "ARB",
@@ -255,11 +279,17 @@
       "margin_defended": false,
       "peak_price": 0.1926,
       "valley_price": 0.1926,
-      "peak_pnl_pct": 0.0,
+      "peak_pnl_pct": 4.56905503634483,
       "probability": 96,
       "mtf_agreement": "5/5 UP",
       "entry_time": 1792090871.6975691,
-      "time": "00:31:11"
+      "time": "00:31:11",
+      "sl_defense_price": 0.176951,
+      "tp_target_pct": 28.04,
+      "current_price": 0.1937,
+      "gross_pnl_pct": 4.57,
+      "net_pnl": 31.99,
+      "net_pnl_pct": 1.28
     },
     {
       "symbol": "UNI",
@@ -279,7 +309,13 @@
       "probability": 96,
       "mtf_agreement": "4/5 DOWN",
       "entry_time": 1792090871.9453917,
-      "time": "00:31:11"
+      "time": "00:31:11",
+      "sl_defense_price": 8.1024,
+      "tp_target_pct": 10.0,
+      "current_price": 7.442,
+      "gross_pnl_pct": -2.64,
+      "net_pnl": -107.71,
+      "net_pnl_pct": -4.31
     },
     {
       "symbol": "PENDLE",
@@ -295,11 +331,17 @@
       "margin_defended": false,
       "peak_price": 2.089,
       "valley_price": 2.089,
-      "peak_pnl_pct": 0.0,
+      "peak_pnl_pct": 7.371948300622389,
       "probability": 96,
       "mtf_agreement": "4/5 UP",
       "entry_time": 1792090872.3277676,
-      "time": "00:31:12"
+      "time": "00:31:12",
+      "sl_defense_price": 1.895,
+      "tp_target_pct": 18.26,
+      "current_price": 2.111,
+      "gross_pnl_pct": 7.37,
+      "net_pnl": 81.81,
+      "net_pnl_pct": 3.27
     },
     {
       "symbol": "DOT",
@@ -315,11 +357,17 @@
       "margin_defended": false,
       "peak_price": 1.132,
       "valley_price": 1.132,
-      "peak_pnl_pct": 0.0,
+      "peak_pnl_pct": 3.710247349823384,
       "probability": 96,
       "mtf_agreement": "3/5 UP",
       "entry_time": 1792090872.5740585,
-      "time": "00:31:12"
+      "time": "00:31:12",
+      "sl_defense_price": 1.0094,
+      "tp_target_pct": 12.67,
+      "current_price": 1.138,
+      "gross_pnl_pct": 3.18,
+      "net_pnl": 13.66,
+      "net_pnl_pct": 0.55
     },
     {
       "symbol": "HYPE",
@@ -335,11 +383,17 @@
       "margin_defended": false,
       "peak_price": 81.829,
       "valley_price": 81.829,
-      "peak_pnl_pct": 0.0,
+      "peak_pnl_pct": 1.759767319654468,
       "probability": 96,
       "mtf_agreement": "5/5 UP",
       "entry_time": 1792090872.878615,
-      "time": "00:31:12"
+      "time": "00:31:12",
+      "sl_defense_price": 75.18,
+      "tp_target_pct": 15.46,
+      "current_price": 82.01,
+      "gross_pnl_pct": 1.76,
+      "net_pnl": -15.35,
+      "net_pnl_pct": -0.61
     },
     {
       "symbol": "AAVE",
@@ -355,11 +409,17 @@
       "margin_defended": false,
       "peak_price": 155.97,
       "valley_price": 155.97,
-      "peak_pnl_pct": 0.0,
+      "peak_pnl_pct": 2.205552349810896,
       "probability": 96,
       "mtf_agreement": "5/5 UP",
       "entry_time": 1792090873.1437469,
-      "time": "00:31:13"
+      "time": "00:31:13",
+      "sl_defense_price": 143.3,
+      "tp_target_pct": 15.44,
+      "current_price": 156.38,
+      "gross_pnl_pct": 2.1,
+      "net_pnl": -9.57,
+      "net_pnl_pct": -0.38
     }
   ],
   "active_position": {
@@ -376,11 +436,17 @@
     "margin_defended": false,
     "peak_price": 0.08824,
     "valley_price": 0.08824,
-    "peak_pnl_pct": 0.0,
+    "peak_pnl_pct": 11.899365367180428,
     "probability": 96,
     "mtf_agreement": "4/5 DOWN",
     "entry_time": 1792090870.763761,
-    "time": "00:31:10"
+    "time": "00:31:10",
+    "sl_defense_price": 0.096434,
+    "tp_target_pct": 10.0,
+    "current_price": 0.08751,
+    "gross_pnl_pct": 5.79,
+    "net_pnl": 55.15,
+    "net_pnl_pct": 2.21
   },
   "is_running": true
 }

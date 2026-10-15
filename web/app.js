@@ -170,6 +170,11 @@ document.addEventListener("DOMContentLoaded", () => {
   setTimeout(() => pollAlerts(), 3500);
   setTimeout(() => runMarketScan(false), 5500);
 
+  // Fast 4s status sync for real-time position distance bar animation
+  setInterval(() => {
+    syncBotStatus();
+  }, 4000);
+
   // Auto-refresh main chart and futures statistics every 15 seconds
   setInterval(() => {
     loadCoinData(currentCoin, true);
@@ -1093,18 +1098,116 @@ async function syncBotStatus() {
         const stop = pos.trailing_stop ? formatPrice(pos.trailing_stop) : (pos.stop_loss ? formatPrice(pos.stop_loss) : "--");
         const runnerTag = isRunner ? `<span class="badge-runner">⚡ RUNNER (+${pos.runner_target_pct || 28}% TP)</span>` : '';
 
+        const entry = Number(pos.buy_price || pos.price || 0);
+        const current = Number(pos.current_price || entry);
+        const targetVal = Number(pos.target || 0);
+
+        // Calculate gross leveraged PnL %
+        let grossPnlPct = 0;
+        if (pos.gross_pnl_pct !== undefined && pos.gross_pnl_pct !== null) {
+          grossPnlPct = Number(pos.gross_pnl_pct);
+        } else if (entry > 0) {
+          const rawMove = isShort ? ((entry - current) / entry) * 100 : ((current - entry) / entry) * 100;
+          grossPnlPct = rawMove * lev;
+        }
+
+        // Defense level (-65% Margin Drawdown)
+        let slDefense = Number(pos.sl_defense_price || 0);
+        if (!slDefense || slDefense <= 0) {
+          if (pos.trailing_stop) {
+            slDefense = Number(pos.trailing_stop);
+          } else if (pos.stop_loss) {
+            slDefense = Number(pos.stop_loss);
+          } else {
+            slDefense = isShort ? (entry * (1.0 + (0.65 / lev))) : (entry * (1.0 - (0.65 / lev)));
+          }
+        }
+
+        // Target PnL %
+        let targetPnlPct = Number(pos.tp_target_pct || 0);
+        if (!targetPnlPct && entry > 0 && targetVal > 0) {
+          const rawTargetMove = isShort ? ((entry - targetVal) / entry) * 100 : ((targetVal - entry) / entry) * 100;
+          targetPnlPct = Math.max(5, rawTargetMove * lev);
+        }
+        if (!targetPnlPct || targetPnlPct <= 0) targetPnlPct = 15.0;
+
+        // Needle percentage: 0% = -65% SL defense, 50% = Entry (0%), 100% = Target TP
+        let needlePct = 50.0;
+        if (grossPnlPct >= 0) {
+          const ratio = Math.min(1.0, grossPnlPct / targetPnlPct);
+          needlePct = 50.0 + (ratio * 50.0);
+        } else {
+          const ratio = Math.min(1.0, Math.abs(grossPnlPct) / 65.0);
+          needlePct = 50.0 - (ratio * 50.0);
+        }
+        needlePct = Math.max(3, Math.min(97, Math.round(needlePct * 10) / 10));
+
+        const isProfit = grossPnlPct >= 0;
+        const pnlSign = grossPnlPct > 0 ? "+" : "";
+        const pnlFormatted = `${pnlSign}${grossPnlPct.toFixed(1)}%`;
+        const pnlColorClass = isProfit ? "pos-pnl-green" : "pos-pnl-red";
+        const pinIcon = isProfit ? "▲" : "▼";
+
+        let fillStyle = "";
+        if (needlePct >= 50) {
+          fillStyle = `left: 50%; width: ${(needlePct - 50).toFixed(1)}%;`;
+        } else {
+          fillStyle = `left: ${needlePct.toFixed(1)}%; width: ${(50 - needlePct).toFixed(1)}%;`;
+        }
+
         posHtml += `
           <div class="active-pos-card ${isShort ? 'short-pos' : 'long-pos'}">
             <div class="pos-card-head">
               <span class="pos-dir-pill ${isShort ? 'short' : 'long'}">${isShort ? 'SHORT' : 'LONG'}</span>
               <span class="pos-coin-name">${pos.symbol}</span>
               <span class="pos-lev-badge">${lev}x</span>
+              <span class="pos-live-pnl-tag ${pnlColorClass}">${pnlSign}${grossPnlPct.toFixed(2)}%</span>
               ${runnerTag}
               <button type="button" class="btn-close-single-pos" onclick="closePositionByCoin('${pos.symbol}')" title="Close ${pos.symbol}">✕ Close</button>
             </div>
             <div class="pos-card-metrics">
-              <div class="pos-m-row"><span>Entry:</span> <b>${formatPrice(pos.buy_price)}</b> • <span>Margin:</span> <b>₹${invested}</b> (${qty} ${pos.symbol})</div>
-              <div class="pos-m-row"><span>Target:</span> <b class="pos-tp-txt">${target}</b> • <span>SL/Trail:</span> <b class="pos-sl-txt">${stop}</b></div>
+              <div class="pos-m-row">
+                <span>Entry:</span> <b>${formatPrice(pos.buy_price)}</b> •
+                <span>Live:</span> <b class="${pnlColorClass}">${formatPrice(current)}</b> •
+                <span>Margin:</span> <b>₹${invested}</b> (${qty} ${pos.symbol})
+              </div>
+              <div class="pos-m-row">
+                <span>Target:</span> <b class="pos-tp-txt">${target} (+${targetPnlPct.toFixed(0)}%)</b> • 
+                <span>SL Defense:</span> <b class="pos-sl-txt">${formatPrice(slDefense)} (-65%)</b>
+              </div>
+            </div>
+
+            <!-- Real-Time Dual-Direction Distance Gauge Bar -->
+            <div class="pos-gauge-container">
+              <div class="pos-gauge-track">
+                <!-- Center 50% Entry Tick -->
+                <div class="pos-gauge-center-line" title="Entry Point: ${formatPrice(entry)} (0%)"></div>
+                <!-- Dynamic Active Fill from Center -->
+                <div class="pos-gauge-fill ${isProfit ? 'fill-profit' : 'fill-loss'}" style="${fillStyle}"></div>
+                <!-- Live Real-Time Moving Pin -->
+                <div class="pos-gauge-needle ${isProfit ? 'needle-profit' : 'needle-loss'}" style="left: ${needlePct}%;">
+                  <div class="pos-gauge-pin"></div>
+                  <div class="pos-gauge-pin-badge ${pnlColorClass}">
+                    ${pinIcon} ${pnlFormatted}
+                  </div>
+                </div>
+              </div>
+
+              <!-- Legend / Labels Below Bar -->
+              <div class="pos-gauge-labels">
+                <div class="pos-gl-item pos-gl-sl">
+                  <span class="pos-gl-title">🛡️ -65% Def</span>
+                  <span class="pos-gl-val">${formatPrice(slDefense)}</span>
+                </div>
+                <div class="pos-gl-item pos-gl-entry">
+                  <span class="pos-gl-title">📍 Entry</span>
+                  <span class="pos-gl-val">${formatPrice(entry)}</span>
+                </div>
+                <div class="pos-gl-item pos-gl-tp">
+                  <span class="pos-gl-title">🎯 TP +${targetPnlPct.toFixed(0)}%</span>
+                  <span class="pos-gl-val">${target}</span>
+                </div>
+              </div>
             </div>
           </div>
         `;
