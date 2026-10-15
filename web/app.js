@@ -209,10 +209,11 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 
-// 5. Canvas Event Handlers (Crosshair & OHLC HUD updates)
+// 5. Canvas Event Handlers (Crosshair & OHLC HUD updates with Mobile Touch Support)
 function setupCanvasEvents() {
   if (!elCanvas) return;
 
+  // Desktop Mouse Events
   elCanvas.addEventListener("mousemove", (e) => {
     if (chartMode !== "ai" || activeCandles.length === 0) return;
     const rect = elCanvas.getBoundingClientRect();
@@ -227,6 +228,31 @@ function setupCanvasEvents() {
     renderCandlestickChart(activeCandles, activePrediction, null);
     resetHudToLatest();
   });
+
+  // Mobile Touch Events (Redmi Note 12 Pro 5G / Smartphones)
+  elCanvas.addEventListener("touchstart", (e) => {
+    if (chartMode !== "ai" || activeCandles.length === 0 || !e.touches || e.touches.length === 0) return;
+    const rect = elCanvas.getBoundingClientRect();
+    const touch = e.touches[0];
+    const mouseX = touch.clientX - rect.left;
+    const mouseY = touch.clientY - rect.top;
+    renderCandlestickChart(activeCandles, activePrediction, { x: mouseX, y: mouseY });
+  }, { passive: true });
+
+  elCanvas.addEventListener("touchmove", (e) => {
+    if (chartMode !== "ai" || activeCandles.length === 0 || !e.touches || e.touches.length === 0) return;
+    const rect = elCanvas.getBoundingClientRect();
+    const touch = e.touches[0];
+    const mouseX = touch.clientX - rect.left;
+    const mouseY = touch.clientY - rect.top;
+    renderCandlestickChart(activeCandles, activePrediction, { x: mouseX, y: mouseY });
+  }, { passive: true });
+
+  elCanvas.addEventListener("touchend", () => {
+    if (chartMode !== "ai" || activeCandles.length === 0) return;
+    renderCandlestickChart(activeCandles, activePrediction, null);
+    resetHudToLatest();
+  }, { passive: true });
 
   if (window.ResizeObserver && elCanvas.parentElement) {
     const ro = new ResizeObserver(() => {
@@ -265,8 +291,8 @@ function renderCandlestickChart(candles, prediction, cursor = null) {
 
   const parent = elCanvas.parentElement;
   const rect = elCanvas.getBoundingClientRect();
-  const width = Math.max(320, rect.width > 350 ? rect.width : (parent && parent.clientWidth > 0 ? parent.clientWidth : 960));
-  const height = Math.max(350, rect.height > 250 ? rect.height : (parent && parent.clientHeight > 0 ? parent.clientHeight : 580));
+  const width = Math.floor(rect.width > 50 ? rect.width : (parent && parent.clientWidth > 50 ? parent.clientWidth : Math.max(300, window.innerWidth - 24)));
+  const height = Math.floor(rect.height > 50 ? rect.height : (parent && parent.clientHeight > 50 ? parent.clientHeight : 330));
 
   elCanvas.width = Math.floor(width * dpr);
   elCanvas.height = Math.floor(height * dpr);
@@ -280,17 +306,18 @@ function renderCandlestickChart(candles, prediction, cursor = null) {
   const forecastPath = prediction && prediction.projected_path ? prediction.projected_path : [];
   const forecastDotsCount = forecastPath.length;
 
-  // Layout parameters
-  const paddingRight = 70; // Y-axis price label area
-  const paddingBottom = 26; // X-axis time label area
-  const paddingTop = 36;   // Top HUD clearance
+  // Layout parameters (Responsive for mobile viewports like Redmi Note 12 Pro)
+  const isMobile = width < 480;
+  const paddingRight = isMobile ? 54 : 70; // Y-axis price label area
+  const paddingBottom = isMobile ? 22 : 26; // X-axis time label area
+  const paddingTop = isMobile ? 30 : 36;   // Top HUD clearance
   const plotWidth = width - paddingRight;
   const plotHeight = height - paddingTop - paddingBottom;
 
   // Space allocation: candles + forecast dots
   const totalSlots = numCandles + forecastDotsCount + 2;
   const slotWidth = plotWidth / totalSlots;
-  const candleWidth = Math.max(3, Math.min(18, slotWidth * 0.72));
+  const candleWidth = Math.max(2, Math.min(18, slotWidth * 0.72));
 
   // Determine price min & max (including candles and forecast targets)
   let minPrice = Infinity;
@@ -323,7 +350,7 @@ function renderCandlestickChart(candles, prediction, cursor = null) {
   // 1. Draw Subtle Gridlines & Right Y-Axis Price Labels
   ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
   ctx.lineWidth = 1;
-  ctx.font = "11px 'JetBrains Mono', monospace";
+  ctx.font = isMobile ? "9px 'JetBrains Mono', monospace" : "11px 'JetBrains Mono', monospace";
   ctx.fillStyle = "#64748b";
   ctx.textAlign = "left";
 
