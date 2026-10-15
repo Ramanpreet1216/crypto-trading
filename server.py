@@ -571,6 +571,8 @@ def bot_worker():
                         bot_state["trade_history"].insert(0, exit_rec)
                         bot_state["active_positions"] = [p for p in bot_state["active_positions"] if p.get("symbol") != pos_symbol]
                         bot_state["active_position"] = bot_state["active_positions"][0] if bot_state["active_positions"] else None
+                        record_paper_trade(exit_rec, active_positions=bot_state["active_positions"])
+                        save_active_positions(bot_state["active_positions"])
                         # 30-minute anti-whipsaw cooldown after a loss to avoid double loss trap!
                         coin_cooldown = getattr(config, "POST_LOSS_COOLDOWN_SECONDS", 1800) if net_pnl < 0 else getattr(config, "SAME_COIN_COOLDOWN_SECONDS", 7200)
                         recent_coins[pos_symbol] = now_ts + coin_cooldown  # 30-min gap cooldown after a loss
