@@ -13,6 +13,7 @@ if sys.platform.startswith("win"):
 import time
 import concurrent.futures
 from typing import List, Dict, Any, Optional
+import config
 
 PUBLIC_URL = "https://public.coindcx.com"
 API_URL = "https://api.coindcx.com"
@@ -210,19 +211,43 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     if not tickers:
         return []
 
-    # INSTITUTIONAL LIQUIDITY FILTER (Min $1,000,000 USDT 24h Volume):
-    # Completely blocks dead/illiquid micro-caps (e.g. BLAST, OTK, KAIO, AMP) that have wide spreads and fatal slippage.
-    MIN_LIQUIDITY_USDT = 1_000_000.0
+    # 1. EXIT-ONLY / DELISTING FILTER:
+    # Completely blocks contracts that are in 'SETTLING', 'DELIVERING', or non-trading status on futures.
+    exit_only_set = set()
+    if getattr(config, "FILTER_EXIT_ONLY_CONTRACTS", True):
+        try:
+            r_info = requests.get("https://fapi.binance.com/fapi/v1/exchangeInfo", timeout=3).json()
+            exit_only_set = {
+                s["symbol"].replace("USDT", "") 
+                for s in r_info.get("symbols", []) 
+                if s.get("status") != "TRADING"
+            }
+        except Exception:
+            exit_only_set = set()
+
+    # 2. INSTITUTIONAL LIQUIDITY & ANTI-GHOST FILTER:
+    # Requires minimum $3,000,000 USDT 24h volume.
+    # Excludes extreme unnatural pump-and-dump spikes (>35% or <-35%) that create catastrophic wicks.
+    min_vol = getattr(config, "MIN_LIQUIDITY_USDT", 3_000_000.0)
+    max_volatility = getattr(config, "MAX_24H_VOLATILITY_PCT", 35.0)
+
     usdt_pairs = [
         t for t in tickers 
         if t.get("symbol", "").endswith("USDT") 
         and t.get("priceChangePercent")
-        and float(t.get("quoteVolume", 0) or 0) >= MIN_LIQUIDITY_USDT
+        and float(t.get("quoteVolume", 0) or 0) >= min_vol
+        and abs(float(t.get("priceChangePercent", 0))) <= max_volatility
+        and t.get("symbol", "").replace("USDT", "") not in exit_only_set
     ]
     if not usdt_pairs:
-        # Fallback to top volume pairs if threshold is unusually high
-        usdt_pairs = [t for t in tickers if t.get("symbol", "").endswith("USDT") and t.get("priceChangePercent")]
-        usdt_pairs = sorted(usdt_pairs, key=lambda x: float(x.get("quoteVolume", 0) or 0), reverse=True)[:30]
+        # Fallback to top volume liquid pairs if volume was unusually high
+        usdt_pairs = [
+            t for t in tickers 
+            if t.get("symbol", "").endswith("USDT") 
+            and t.get("priceChangePercent")
+            and t.get("symbol", "").replace("USDT", "") not in exit_only_set
+        ]
+        usdt_pairs = sorted(usdt_pairs, key=lambda x: float(x.get("quoteVolume", 0) or 0), reverse=True)[:35]
         if not usdt_pairs:
             return []
 

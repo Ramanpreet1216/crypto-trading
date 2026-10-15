@@ -109,6 +109,11 @@ RUNNER_EXTENDED_TP_PCT = 28.0  # Auto-shift TP up to +28% - +35%
 RUNNER_LOCK_PROFIT_PCT = 11.0  # Lock at least +11% guaranteed net profit
 RUNNER_TRAILING_BUFFER_PCT = 7.0 # Trail 7% below peak PnL for runners
 
+# Anti-Ghost Coin & Institutional Liquidity Safeguards
+MIN_LIQUIDITY_USDT = 3_000_000.0   # Minimum $3M USDT 24h volume (eliminates illiquid ghost coins & fatal slippage)
+MAX_24H_VOLATILITY_PCT = 35.0      # Anti-pump-and-dump: blocks unnatural extreme spike coins (>35% or <-35%)
+FILTER_EXIT_ONLY_CONTRACTS = True  # Automatically blacklist non-trading, delisted, and exit-only contracts
+
 # Strategy settings (EMA Crossover + RSI)
 FAST_EMA_PERIOD = 9
 SLOW_EMA_PERIOD = 21
