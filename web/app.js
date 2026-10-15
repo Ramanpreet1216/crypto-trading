@@ -1111,7 +1111,10 @@ async function syncBotStatus() {
           grossPnlPct = rawMove * lev;
         }
 
-        // Defense level (-65% Margin Drawdown)
+        const trailLockPct = Number(pos.trailing_lock_pct || 0);
+        const hasProfitLock = trailLockPct > 0 || (pos.trailing_stop && (isShort ? Number(pos.trailing_stop) < entry : Number(pos.trailing_stop) > entry));
+
+        // Defense level (-65% Margin Drawdown or Trailing Profit Lock)
         let slDefense = Number(pos.sl_defense_price || 0);
         if (!slDefense || slDefense <= 0) {
           if (pos.trailing_stop) {
@@ -1121,6 +1124,14 @@ async function syncBotStatus() {
           } else {
             slDefense = isShort ? (entry * (1.0 + (0.65 / lev))) : (entry * (1.0 - (0.65 / lev)));
           }
+        }
+
+        // Lock notch position on track (if profit locked)
+        let lockNotchHtml = '';
+        if (hasProfitLock && targetPnlPct > 0) {
+          const lockRatio = Math.min(1.0, (trailLockPct || 7.0) / targetPnlPct);
+          const lockNeedlePct = Math.max(52, Math.min(95, 50.0 + (lockRatio * 50.0)));
+          lockNotchHtml = `<div class="pos-gauge-trail-lock" style="left: ${lockNeedlePct.toFixed(1)}%;" title="🔒 Trailing Profit Lock (+${trailLockPct}%): ${formatPrice(slDefense)}"></div>`;
         }
 
         // Target PnL %
@@ -1162,6 +1173,7 @@ async function syncBotStatus() {
               <span class="pos-coin-name">${pos.symbol}</span>
               <span class="pos-lev-badge">${lev}x</span>
               <span class="pos-live-pnl-tag ${pnlColorClass}">${pnlSign}${grossPnlPct.toFixed(2)}%</span>
+              ${hasProfitLock ? `<span class="badge-profit-lock">🔒 +${trailLockPct || 7}% LOCKED</span>` : ''}
               ${runnerTag}
               <button type="button" class="btn-close-single-pos" onclick="closePositionByCoin('${pos.symbol}')" title="Close ${pos.symbol}">✕ Close</button>
             </div>
@@ -1173,7 +1185,7 @@ async function syncBotStatus() {
               </div>
               <div class="pos-m-row">
                 <span>Target:</span> <b class="pos-tp-txt">${target} (+${targetPnlPct.toFixed(0)}%)</b> • 
-                <span>SL Defense:</span> <b class="pos-sl-txt">${formatPrice(slDefense)} (-65%)</b>
+                <span>${hasProfitLock ? 'Profit Lock:' : 'SL Defense:'}</span> <b class="${hasProfitLock ? 'pos-lock-txt' : 'pos-sl-txt'}">${hasProfitLock ? '🔒 +' + (trailLockPct || 7) + '% (' + formatPrice(slDefense) + ')' : formatPrice(slDefense) + ' (-65%)'}</b>
               </div>
             </div>
 
@@ -1182,6 +1194,7 @@ async function syncBotStatus() {
               <div class="pos-gauge-track">
                 <!-- Center 50% Entry Tick -->
                 <div class="pos-gauge-center-line" title="Entry Point: ${formatPrice(entry)} (0%)"></div>
+                ${lockNotchHtml}
                 <!-- Dynamic Active Fill from Center -->
                 <div class="pos-gauge-fill ${isProfit ? 'fill-profit' : 'fill-loss'}" style="${fillStyle}"></div>
                 <!-- Live Real-Time Moving Pin -->
@@ -1195,8 +1208,8 @@ async function syncBotStatus() {
 
               <!-- Legend / Labels Below Bar -->
               <div class="pos-gauge-labels">
-                <div class="pos-gl-item pos-gl-sl">
-                  <span class="pos-gl-title">🛡️ -65% Def</span>
+                <div class="pos-gl-item ${hasProfitLock ? 'pos-gl-lock' : 'pos-gl-sl'}">
+                  <span class="pos-gl-title">${hasProfitLock ? `🔒 +${trailLockPct || 7}% Lock` : '🛡️ -65% Def'}</span>
                   <span class="pos-gl-val">${formatPrice(slDefense)}</span>
                 </div>
                 <div class="pos-gl-item pos-gl-entry">

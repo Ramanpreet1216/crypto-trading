@@ -4967,5 +4967,55 @@ body {
   }
 }
 
+/* Progressive Trailing Profit Lock Indicators */
+.badge-profit-lock {
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+  animation: lockPulse 2s infinite ease-in-out;
+}
+
+@keyframes lockPulse {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 1; box-shadow: 0 0 8px rgba(245, 158, 11, 0.5); }
+}
+
+.pos-lock-txt {
+  color: #fbbf24 !important;
+  font-weight: 700;
+}
+
+.pos-gl-lock {
+  align-items: flex-start;
+  color: #fbbf24;
+}
+
+.pos-gauge-trail-lock {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: #fbbf24;
+  box-shadow: 0 0 6px rgba(251, 191, 36, 0.9);
+  transform: translateX(-50%);
+  z-index: 3;
+  border-radius: 2px;
+}
+
+.pos-gauge-trail-lock::after {
+  content: '🔒';
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.55rem;
+}
+
+
 
 

@@ -372,8 +372,11 @@ def bot_worker():
                     peak_pnl = max(float(pos.get("peak_pnl_pct", gross_pnl_pct)), gross_pnl_pct)
                     pos["peak_pnl_pct"] = peak_pnl
 
-                    # Calculate -65% margin defense level and target TP %
-                    sl_defense = round(buy_price * (1.0 - (0.65 / pos_lev)), precision) if pos_dir == "LONG" else round(buy_price * (1.0 + (0.65 / pos_lev)), precision)
+                    # Calculate defense level: if trailing profit lock is active, preserve locked profit price!
+                    if pos.get("trailing_stop") and float(pos.get("trailing_lock_pct", 0.0) or 0.0) > 0:
+                        sl_defense = float(pos["trailing_stop"])
+                    else:
+                        sl_defense = round(buy_price * (1.0 - (0.65 / pos_lev)), precision) if pos_dir == "LONG" else round(buy_price * (1.0 + (0.65 / pos_lev)), precision)
                     pos["sl_defense_price"] = sl_defense
 
                     target_p = float(pos.get("target") or (buy_price * 1.02))
@@ -407,62 +410,52 @@ def bot_worker():
                         continue
 
                     # ----------------------------------------------------------
-                    # ASYMMETRIC ANTI-CHOKE PROFIT RATCHET (3.5:1+ RISK:REWARD)
+                    # USER-SPECIFIED PROGRESSIVE TRAILING PROFIT-LOCK STAIRCASE
+                    # For Big TP Trades (+28%, +30%, +42%):
+                    # - At +15% PnL: Shift SL from -65% to +7% Profit Lock!
+                    # - At +20% PnL: Shift SL to +10% Profit Lock!
+                    # - At +25% PnL: Shift SL to +12% Profit Lock!
+                    # - At +30% PnL: Shift SL to +18% Profit Lock!
+                    # - At +35% PnL: Shift SL to +24% Profit Lock!
+                    # - At +40%+ PnL: Shift SL to max(+30%, peak - 8%) Profit Lock!
+                    # - At +8% PnL: Early Breakeven Protection (+2% fee cushion)
                     # ----------------------------------------------------------
-                    # Stage 1: Give trades room to breathe! (0% to +8.0% PnL)
-                    # Normal ±0.5% - 0.8% micro-pullbacks are allowed without moving SL.
+                    effective_pnl = max(gross_pnl_pct, peak_pnl)
+                    target_lock_pnl = None
 
-                    # Stage 2: Breakeven Capital Protection (+8.0% leveraged PnL)
-                    # When trade reaches +8% PnL, move SL to Entry + Fee cushion (+2.0% PnL).
-                    # Capital is 100% safe.
-                    if gross_pnl_pct >= 8.0:
-                        lock_pnl_stage2 = 2.0
-                        lock_price_s2 = round(buy_price * (1.0 + (lock_pnl_stage2 / 100.0) / pos_lev), precision) if pos_dir == "LONG" else round(buy_price * (1.0 - (lock_pnl_stage2 / 100.0) / pos_lev), precision)
-                        cur_trail = pos.get("trailing_stop", pos.get("stop_loss", 0))
-                        if pos_dir == "LONG" and lock_price_s2 > cur_trail:
-                            pos["trailing_stop"] = lock_price_s2
-                        elif pos_dir == "SHORT" and (cur_trail == 0 or lock_price_s2 < cur_trail):
-                            pos["trailing_stop"] = lock_price_s2
+                    staircase = getattr(config, "TRAILING_PROFIT_STAIRCASE", [
+                        (40.0, 30.0),
+                        (35.0, 24.0),
+                        (30.0, 18.0),
+                        (25.0, 12.0),
+                        (20.0, 10.0),
+                        (15.0, 7.0),
+                        (8.0, 2.0)
+                    ])
 
-                    # Stage 3: Major Profit Lock (+11.5% leveraged PnL / ~+2.9% spot)
-                    # When trade hits +11.5% PnL, lock in at least +7.5% leveraged PnL (+₹11.25+ net profit guaranteed!)
-                    if gross_pnl_pct >= 11.5:
-                        lock_pnl_stage3 = 7.5
-                        lock_price_s3 = round(buy_price * (1.0 + (lock_pnl_stage3 / 100.0) / pos_lev), precision) if pos_dir == "LONG" else round(buy_price * (1.0 - (lock_pnl_stage3 / 100.0) / pos_lev), precision)
-                        cur_trail = pos.get("trailing_stop", pos.get("stop_loss", 0))
-                        if pos_dir == "LONG" and lock_price_s3 > cur_trail:
-                            pos["trailing_stop"] = lock_price_s3
-                        elif pos_dir == "SHORT" and (cur_trail == 0 or lock_price_s3 < cur_trail):
-                            pos["trailing_stop"] = lock_price_s3
+                    for trigger_pct, lock_pct in staircase:
+                        if effective_pnl >= trigger_pct:
+                            if trigger_pct >= 40.0:
+                                target_lock_pnl = max(lock_pct, round(effective_pnl - 8.0, 1))
+                            else:
+                                target_lock_pnl = lock_pct
+                            break
 
-                    # Stage 4: High-Yield Lock (+15.0% leveraged PnL)
-                    # When trade hits +15% PnL, lock in at least +10.5% leveraged PnL (+₹15.75+ net profit guaranteed!)
-                    if gross_pnl_pct >= 15.0:
-                        lock_pnl_stage4 = 10.5
-                        lock_price_s4 = round(buy_price * (1.0 + (lock_pnl_stage4 / 100.0) / pos_lev), precision) if pos_dir == "LONG" else round(buy_price * (1.0 - (lock_pnl_stage4 / 100.0) / pos_lev), precision)
-                        cur_trail = pos.get("trailing_stop", pos.get("stop_loss", 0))
-                        if pos_dir == "LONG" and lock_price_s4 > cur_trail:
-                            pos["trailing_stop"] = lock_price_s4
-                        elif pos_dir == "SHORT" and (cur_trail == 0 or lock_price_s4 < cur_trail):
-                            pos["trailing_stop"] = lock_price_s4
+                    if target_lock_pnl is not None:
+                        prev_lock = float(pos.get("trailing_lock_pct", 0.0) or 0.0)
+                        if target_lock_pnl > prev_lock:
+                            pos["trailing_lock_pct"] = target_lock_pnl
+                            lock_price = round(buy_price * (1.0 + (target_lock_pnl / 100.0) / pos_lev), precision) if pos_dir == "LONG" else round(buy_price * (1.0 - (target_lock_pnl / 100.0) / pos_lev), precision)
+                            pos["trailing_stop"] = lock_price
+                            pos["sl_defense_price"] = lock_price
+                            print(f"[🔒 TRAILING PROFIT LOCK] {pos_symbol} reached +{effective_pnl:.1f}% -> SL shifted to +{target_lock_pnl:.1f}% locked profit (${lock_price:.4f})")
 
-                    # Stage 5: Mega-Runner Mode (+18.0% leveraged PnL / ~+4.5% spot)
-                    # When a breakout is strong (+18%+), expand target to +28% - +35% PnL (+₹40+ gain)!
+                    # Mega-Runner Target Expansion (+18%+)
                     if gross_pnl_pct >= config.RUNNER_TRIGGER_PNL_PCT:
                         pos["is_runner"] = True
                         pos["runner_target_pct"] = config.RUNNER_EXTENDED_TP_PCT
                         extended_target = round(buy_price * (1.0 + (config.RUNNER_EXTENDED_TP_PCT / 100.0) / pos_lev), precision) if pos_dir == "LONG" else round(buy_price * (1.0 - (config.RUNNER_EXTENDED_TP_PCT / 100.0) / pos_lev), precision)
                         pos["target"] = extended_target
-
-                    # High-Gain Trailing Ratchet for Runners (Trail 6% below peak, locking at least +12% profit)
-                    if peak_pnl >= 18.0:
-                        trail_pnl_lvl = max(12.0, peak_pnl - 6.0)
-                        trail_price = round(buy_price * (1.0 + (trail_pnl_lvl / 100.0) / pos_lev), precision) if pos_dir == "LONG" else round(buy_price * (1.0 - (trail_pnl_lvl / 100.0) / pos_lev), precision)
-                        cur_trail = pos.get("trailing_stop", pos.get("stop_loss", 0))
-                        if pos_dir == "LONG" and trail_price > cur_trail:
-                            pos["trailing_stop"] = trail_price
-                        elif pos_dir == "SHORT" and (cur_trail == 0 or trail_price < cur_trail):
-                            pos["trailing_stop"] = trail_price
 
                     # ----------------------------------------------------------
                     # SMART MARGIN DEFENSE AT -65% DRAWDOWN (DE-LEVERAGE BUFFER)
@@ -708,6 +701,7 @@ def bot_worker():
                                 "pair": c_pair,
                                 "direction": pos_dir,
                                 "buy_price": live_p,
+                                "current_price": live_p,
                                 "quantity": qty,
                                 "invested": spend,
                                 "leverage": pos_lev,
@@ -718,6 +712,12 @@ def bot_worker():
                                 "peak_price": live_p,
                                 "valley_price": live_p,
                                 "peak_pnl_pct": 0.0,
+                                "gross_pnl_pct": 0.0,
+                                "net_pnl": 0.0,
+                                "net_pnl_pct": 0.0,
+                                "sl_defense_price": round(live_p * (1.0 - (0.65 / pos_lev)), precision) if pos_dir == "LONG" else round(live_p * (1.0 + (0.65 / pos_lev)), precision),
+                                "tp_target_pct": round(((target_price - live_p) / max(1e-6, live_p)) * 100.0 * pos_lev, 2) if pos_dir == "LONG" else round(((live_p - target_price) / max(1e-6, live_p)) * 100.0 * pos_lev, 2),
+                                "trailing_lock_pct": 0.0,
                                 "probability": prob,
                                 "mtf_agreement": mtf_lbl,
                                 "entry_time": entry_ts,

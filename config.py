@@ -109,6 +109,24 @@ RUNNER_EXTENDED_TP_PCT = 28.0  # Auto-shift TP up to +28% - +35%
 RUNNER_LOCK_PROFIT_PCT = 11.0  # Lock at least +11% guaranteed net profit
 RUNNER_TRAILING_BUFFER_PCT = 7.0 # Trail 7% below peak PnL for runners
 
+# Progressive Trailing Profit-Lock Staircase (User Specified)
+# When a big TP trade (+28%, +30%, +42%) moves into profit, shift SL to lock in gains:
+# - At +15% PnL -> Lock +7% SL
+# - At +20% PnL -> Lock +10% SL
+# - At +25% PnL -> Lock +12% SL
+# - At +30% PnL -> Lock +18% SL
+# - At +35% PnL -> Lock +24% SL
+# - At +40%+ PnL -> Lock max(+30%, peak - 8%) SL
+TRAILING_PROFIT_STAIRCASE = [
+    (40.0, 30.0),
+    (35.0, 24.0),
+    (30.0, 18.0),
+    (25.0, 12.0),
+    (20.0, 10.0),
+    (15.0, 7.0),
+    (8.0, 2.0),
+]
+
 # Anti-Ghost Coin & Institutional Liquidity Safeguards
 MIN_LIQUIDITY_USDT = 3_000_000.0   # Minimum $3M USDT 24h volume (eliminates illiquid ghost coins & fatal slippage)
 MAX_24H_VOLATILITY_PCT = 35.0      # Anti-pump-and-dump: blocks unnatural extreme spike coins (>35% or <-35%)
