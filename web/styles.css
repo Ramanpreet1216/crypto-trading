@@ -230,6 +230,49 @@ body {
   box-shadow: 0 4px 16px var(--accent-red-glow);
 }
 
+.btn-manage-only {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  padding: 8px 16px;
+  border-radius: 100px;
+  font-family: var(--font-display);
+  font-size: 0.80rem;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  box-shadow: 0 2px 10px rgba(245, 158, 11, 0.15);
+}
+
+.btn-manage-only:hover {
+  transform: translateY(-1px);
+  background: rgba(245, 158, 11, 0.22);
+  border-color: #f59e0b;
+  box-shadow: 0 4px 18px rgba(245, 158, 11, 0.35);
+  color: #fef3c7;
+}
+
+.btn-manage-only.paused {
+  background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+  color: #ffffff;
+  border-color: #f59e0b;
+  box-shadow: 0 4px 18px rgba(245, 158, 11, 0.5);
+  animation: pulse-manage-only 2s infinite ease-in-out;
+}
+
+@keyframes pulse-manage-only {
+  0%, 100% {
+    box-shadow: 0 4px 16px rgba(245, 158, 11, 0.45);
+  }
+  50% {
+    box-shadow: 0 4px 26px rgba(245, 158, 11, 0.85);
+  }
+}
+
 /* ==========================================================================
    TRENDING TICKER BAR
    ========================================================================== */
@@ -3352,6 +3395,84 @@ body {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.trade-date-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.68rem;
+}
+
+.date-quick-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.date-quick-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #94a3b8;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.date-quick-btn.active, .date-quick-btn:hover {
+  background: rgba(168, 85, 247, 0.15);
+  border-color: rgba(168, 85, 247, 0.4);
+  color: #c084fc;
+}
+
+.date-range-inputs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.date-input-lbl {
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+
+.trade-date-picker {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  outline: none;
+  font-family: inherit;
+  color-scheme: dark;
+}
+
+.trade-date-picker:focus {
+  border-color: #38bdf8;
+}
+
+.date-clear-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.date-clear-btn:hover {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
 .trade-tab-group {
   display: flex;
   gap: 4px;
@@ -4774,7 +4895,7 @@ body {
 
 /* ==========================================================================
    REAL-TIME DUAL-DIRECTION TP/SL DISTANCE GAUGE BAR
-   Center = Entry (50%) | Right = Target TP (100%) | Left = -65% Margin Defense (0%)
+   Center = Entry (50%) | Right = Target TP (100%) | Left = -48% Margin Defense (0%)
    ========================================================================== */
 .pos-live-pnl-tag {
   font-size: 0.68rem;

@@ -8,13 +8,33 @@ import threading
 import time
 import requests
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# Indian Standard Time (IST, UTC+05:30)
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def get_ist_now():
+    return datetime.now(IST)
+
+def get_ist_time_str():
+    return get_ist_now().strftime("%H:%M:%S")
+
+def get_ist_datetime_str():
+    return get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
 import config
 from coindcx_client import CoinDCXClient
 from strategy import evaluate_signal, calculate_indicators
 import scanner
 import predictor
+import coindcx_ws
+
+# Start real-time CoinDCX WebSocket streaming engine
+ws_stream = coindcx_ws.get_ws_stream()
+try:
+    ws_stream.start()
+except Exception as e:
+    print(f"[CoinDCX WS Init Notice]: {e}")
 
 # Ensure UTF-8 output on Windows terminal
 if sys.platform.startswith("win"):
@@ -23,7 +43,7 @@ if sys.platform.startswith("win"):
     except Exception:
         pass
 
-PORT = int(os.environ.get("PORT", 5000))
+PORT = int(os.environ.get("PORT", 5001))
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 
 def calculate_futures_trade_qty(coin: str, current_price: float, target_margin_inr: float = 150.0, leverage: int = 5):
@@ -34,7 +54,11 @@ def calculate_futures_trade_qty(coin: str, current_price: float, target_margin_i
     notional_usd = notional_inr / usd_inr
     raw_qty = notional_usd / max(0.000001, current_price)
 
-    if current_price < 0.001:
+    # CoinDCX futures contracts that enforce whole number (step=1.0) lot sizing:
+    INTEGER_QTY_COINS = {"NEAR", "AVAX", "DOT", "LINK", "UNI", "ICP", "ATOM", "FIL", "SAND", "MANA", "AXS", "GALA", "CHZ", "ENJ", "CRV", "LDO"}
+    if coin.upper() in INTEGER_QTY_COINS:
+        qty = float(max(1, int(round(raw_qty))))
+    elif current_price < 0.001:
         qty = round(raw_qty, 0)
     elif current_price < 1.0:
         qty = round(raw_qty, 1)
@@ -101,8 +125,14 @@ def calculate_trade_deductions(invested_inr, leverage, gross_pnl_inr):
     tds = round(gross_proceeds * tds_rate, 2)
 
     # 3. 30% Flat VDA Tax + 4% Cess = 31.2% (applied strictly to gross profits under Sec 115BBH)
+    # 3. 30% Flat VDA Tax + 4% Cess = 31.2% (Section 115BBH)
     tax_rate = getattr(config, "GOVT_TAX_RATE_PCT", 31.2) / 100.0
-    govt_tax = round(gross_pnl * tax_rate, 2) if gross_pnl > 0 else 0.0
+    if gross_pnl > 0:
+        total_tax_liability = round(gross_pnl * tax_rate, 2)
+        # TDS (1%) is an advance tax collected at source on PAN; remaining net tax due:
+        govt_tax = max(0.0, round(total_tax_liability - tds, 2))
+    else:
+        govt_tax = 0.0
 
     # Total Deductions & Net In-Pocket PnL
     total_deductions = round(exchange_fee + tds + govt_tax, 2)
@@ -127,8 +157,11 @@ def calculate_trade_fee(invested_inr, leverage, gross_pnl_inr, fee_mode=None):
 def calculate_trade_performance(trades):
     """Calculate Net PnL, Win Rate %, Total Wins, Total Losses, Fees, TDS, Govt Taxes, and Volume."""
     completed = [t for t in trades if t.get("type") in ["SELL", "BUY_COVER"] or t.get("pnl") is not None]
-    wins = [t for t in completed if _extract_pnl(t) > 0]
-    losses = [t for t in completed if _extract_pnl(t) < 0]
+    
+    # Real Wins: Trades where market price action was profitable (gross_pnl > 0 or net_pnl >= 0).
+    # Real Losses: Trades where market moved against the position (gross_pnl < 0).
+    wins = [t for t in completed if float(t.get("gross_pnl", 0) or 0) > 0 or _extract_pnl(t) >= 0]
+    losses = [t for t in completed if float(t.get("gross_pnl", 0) or 0) < 0 and _extract_pnl(t) < 0]
     total_pnl = sum(_extract_pnl(t) for t in completed)
     total_gross = sum(float(t.get("gross_pnl", 0) or 0) for t in completed)
     total_fees = sum(float(t.get("fee", 0) or t.get("exchange_fee", 0) or 0) for t in completed)
@@ -170,10 +203,10 @@ def record_paper_trade(trade_entry, active_positions="UNCHANGED"):
                 cur_pos = [data["active_position"]]
 
         payload = {
-            "updated_at": datetime.now().isoformat(),
-            "paper_balance": bot_state.get("paper_balance", 30000.0),
-            "starting_balance": getattr(config, "STARTING_WALLET_INR", 30000.0),
-            "max_slots": getattr(config, "MAX_OPEN_POSITIONS", 10),
+            "updated_at": get_ist_now().isoformat(),
+            "paper_balance": bot_state.get("paper_balance", getattr(config, "STARTING_WALLET_INR", 3006.0)),
+            "starting_balance": getattr(config, "STARTING_WALLET_INR", 3006.0),
+            "max_slots": getattr(config, "MAX_OPEN_POSITIONS", 5),
             "summary": summary,
             "trades": trades[:500],
             "active_positions": cur_pos,
@@ -187,18 +220,22 @@ def record_paper_trade(trade_entry, active_positions="UNCHANGED"):
         print(f"[Error saving {TRADES_FILE}]: {e}")
         return {}
 
-def save_active_positions(positions, is_running=None):
-    """Persist active positions list and 24/7 running state directly to disk."""
+def save_active_positions(positions, is_running=None, allow_new_trades=None):
+    """Persist active positions list, 24/7 running state, and manage-only mode directly to disk."""
     try:
         data = load_paper_trades()
         cur_pos = positions if isinstance(positions, list) else ([positions] if positions else [])
         data["active_positions"] = cur_pos
         data["active_position"] = cur_pos[0] if cur_pos else None
-        data["paper_balance"] = bot_state.get("paper_balance", 30000.0)
-        data["max_slots"] = getattr(config, "MAX_OPEN_POSITIONS", 10)
+        data["paper_balance"] = bot_state.get("paper_balance", getattr(config, "STARTING_WALLET_INR", 3006.0))
+        data["max_slots"] = getattr(config, "MAX_OPEN_POSITIONS", 5)
         if is_running is not None:
             data["is_running"] = is_running
-        data["updated_at"] = datetime.now().isoformat()
+        if allow_new_trades is not None:
+            data["allow_new_trades"] = allow_new_trades
+        elif "allow_new_trades" in bot_state:
+            data["allow_new_trades"] = bot_state["allow_new_trades"]
+        data["updated_at"] = get_ist_now().isoformat()
         with open(TRADES_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
     except Exception as e:
@@ -211,7 +248,7 @@ def save_active_position(pos):
 
 
 # Shared Bot State with Active Live Trade & Predictive Forecasts
-now_str = datetime.now().strftime("%H:%M:%S")
+now_str = get_ist_time_str()
 initial_paper_data = load_paper_trades()
 raw_positions = initial_paper_data.get("active_positions")
 if raw_positions is None:
@@ -219,10 +256,11 @@ if raw_positions is None:
     raw_positions = [single] if single else []
 
 bot_state = {
-    "is_running": initial_paper_data.get("is_running", True),  # Runs 24/7 continuously by default
-    "paper_balance": float(initial_paper_data.get("paper_balance", getattr(config, "STARTING_WALLET_INR", 30000.0))),
-    "starting_balance": float(initial_paper_data.get("starting_balance", getattr(config, "STARTING_WALLET_INR", 30000.0))),
-    "max_slots": getattr(config, "MAX_OPEN_POSITIONS", 10),
+    "is_running": initial_paper_data.get("is_running", True),  # Active by default
+    "allow_new_trades": initial_paper_data.get("allow_new_trades", True), # Manage-Only toggle (False = manage active only, no new trades)
+    "paper_balance": float(initial_paper_data.get("paper_balance", getattr(config, "STARTING_WALLET_INR", 3006.0))),
+    "starting_balance": float(initial_paper_data.get("starting_balance", getattr(config, "STARTING_WALLET_INR", 3006.0))),
+    "max_slots": getattr(config, "MAX_OPEN_POSITIONS", 5),
     "active_positions": raw_positions,
     "active_position": raw_positions[0] if raw_positions else None,
     "selected_coin": "BTC",
@@ -230,7 +268,7 @@ bot_state = {
     "trade_history": initial_paper_data.get("trades", []),
     "performance_summary": calculate_trade_performance(initial_paper_data.get("trades", [])),
     "last_signal": "AUTONOMOUS 24/7 ENGINE ACTIVE",
-    "last_reason": f"Active slots: {len(raw_positions)}/{getattr(config, 'MAX_OPEN_POSITIONS', 10)}. Dynamic 10-slot manager & full tax/fee audit active.",
+    "last_reason": f"Active slots: {len(raw_positions)}/{getattr(config, 'MAX_OPEN_POSITIONS', 5)}. Dynamic 5-slot manager & full tax/fee audit active.",
     "latest_prediction": {},
 }
 
@@ -241,19 +279,43 @@ def analyze_macro_market_regime():
     and adaptive target profit % (2% - 4.5%).
     """
     try:
+        tickers = scanner._fetch_all_raw_tickers()
+        if not tickers:
+            return "USER_MIRROR", 8, 2.8, 0.0, 84, "🎯 Disciplined Sniper (Scanning Market)", "ALL"
+
+        green_coins = [t for t in tickers if float(t.get("priceChangePercent", 0)) > 0]
+        breadth_pct = (len(green_coins) / max(1, len(tickers))) * 100.0
+
+        # Check Bitcoin trend (Macro King of Market)
+        client = CoinDCXClient()
+        btc_candles = client.get_candles(pair="B-BTC_USDT", interval="1h", limit=24)
+        btc_bullish = False
+        if btc_candles is not None and len(btc_candles) >= 15:
+            btc_df = calculate_indicators(btc_candles)
+            last_c = btc_df.iloc[-1]
+            btc_bullish = bool((last_c["close"] > last_c["ema_slow"]) and (last_c["rsi"] >= 48))
+
+        # Dynamic Direction Determination:
+        # If market breadth is bearish (< 45% green) or Bitcoin is below EMA21, market is in a DOWNTREND -> SHORTS ONLY!
+        if breadth_pct < 45.0 or (not btc_bullish and breadth_pct < 52.0):
+            macro_dir = "DOWN"
+            regime_status = "📉 DOWNTREND (SHORTS ONLY)"
+        elif breadth_pct >= 58.0 and btc_bullish:
+            macro_dir = "UP"
+            regime_status = "🚀 BULL EXPANSION (LONGS ONLY)"
+        else:
+            macro_dir = "ALL"
+            regime_status = "⚖️ BALANCED ROTATION"
+
         if getattr(config, "CURRENT_RISK_MODE", "USER_MIRROR") == "USER_MIRROR":
             mode = "USER_MIRROR"
             lev = 8  # Dynamic fallback; per-coin leverage is 22x BTC, 12x ETH, 6-8x Alts
-            tp_pct = 1.25  # Front-run 10-18% margin ROI
-            sl_pct = 0.0   # No tight SL; managed by -65% Margin Defense
-            min_conf = 80
-            preferred_dir = "ALL"
-            desc = f"🎯 User Mirror Sniper (6x-22x Safe Lev, ₹200-₹500 TP, 30m Anti-Whipsaw Cooldown)."
+            tp_pct = 2.80  # +22% Dynamic TP
+            sl_pct = 0.0   # Managed by disciplined stop-loss
+            min_conf = 84
+            preferred_dir = macro_dir
+            desc = f"🎯 Disciplined Sniper ({regime_status}, {breadth_pct:.1f}% green). ₹6,000 sizing, +22% TP, -14% SL."
             return mode, lev, tp_pct, sl_pct, min_conf, desc, preferred_dir
-
-        tickers = scanner._fetch_all_raw_tickers()
-        if not tickers:
-            return "BALANCED", 6, 3.5, 1.5, 85, "⚖️ Balanced Baseline (Scanning Market)"
 
         green_coins = [t for t in tickers if float(t.get("priceChangePercent", 0)) > 0]
         breadth_pct = (len(green_coins) / max(1, len(tickers))) * 100.0
@@ -332,11 +394,156 @@ def bot_worker():
                     bot_state["active_positions"] = [bot_state["active_position"]] if bot_state.get("active_position") else []
 
                 # ==============================================================
-                # PHASE 1: MANAGE ALL ACTIVE POSITIONS (UP TO 3 SLOTS CONCURRENTLY)
+                # 2-WAY EXCHANGE POSITION RECONCILIATION
+                # Automatically detects if user closed a trade on CoinDCX Mobile App!
+                # ==============================================================
+                if not config.DRY_RUN and client.api_key and client.api_secret:
+                    try:
+                        live_open_positions = client.get_futures_positions()
+                        if isinstance(live_open_positions, list):
+                            live_open_pairs = {p.get("pair") for p in live_open_positions if abs(float(p.get("active_pos", 0) or 0)) > 0}
+                            
+                            # 1. Import any positions opened externally (e.g. on CoinDCX mobile app)
+                            existing_pairs = {p.get("pair") for p in bot_state["active_positions"]}
+                            for ext_p in live_open_positions:
+                                ext_qty = float(ext_p.get("active_pos", 0) or 0)
+                                ext_pair = ext_p.get("pair")
+                                if abs(ext_qty) > 0 and ext_pair and ext_pair not in existing_pairs:
+                                    coin_name = ext_pair.replace("B-", "").replace("_USDT", "")
+                                    side = "LONG" if ext_qty > 0 else "SHORT"
+                                    entry_px = float(ext_p.get("avg_price") or ext_p.get("mark_price") or 0)
+                                    lev = int(float(ext_p.get("leverage") or 7))
+                                    locked_margin_usd = float(ext_p.get("locked_user_margin") or ext_p.get("locked_margin") or 0)
+                                    settle_rate = float(ext_p.get("settlement_currency_avg_price") or 102.0)
+                                    invested_inr = round(locked_margin_usd * settle_rate, 2)
+                                    if invested_inr <= 0:
+                                        invested_inr = round(abs(ext_qty) * entry_px * 90.0 / max(1, lev), 2)
+                                    
+                                    tp_pct = 7.0
+                                    target_p = entry_px * (1.0 + (tp_pct / 100.0) / lev) if side == "LONG" else entry_px * (1.0 - (tp_pct / 100.0) / lev)
+                                    
+                                    imported_pos = {
+                                        "symbol": coin_name,
+                                        "pair": ext_pair,
+                                        "direction": side,
+                                        "buy_price": entry_px,
+                                        "current_price": entry_px,
+                                        "quantity": abs(ext_qty),
+                                        "invested": invested_inr,
+                                        "leverage": lev,
+                                        "target": round(target_p, 4),
+                                        "stop_loss": None,
+                                        "trailing_stop": None,
+                                        "margin_defended": False,
+                                        "peak_price": entry_px,
+                                        "valley_price": entry_px,
+                                        "peak_pnl_pct": 0.0,
+                                        "gross_pnl_pct": 0.0,
+                                        "net_pnl": 0.0,
+                                        "net_pnl_pct": 0.0,
+                                        "sl_defense_price": None,
+                                        "tp_target_pct": tp_pct,
+                                        "trailing_lock_pct": 0.0,
+                                        "probability": 92,
+                                        "mtf_agreement": "Mobile App Sync",
+                                        "entry_time": time.time(),
+                                        "time": get_ist_time_str()
+                                    }
+                                    bot_state["active_positions"].append(imported_pos)
+                                    existing_pairs.add(ext_pair)
+                                    print(f"[🔄 2-Way Sync]: Imported {side} {coin_name} (Qty: {abs(ext_qty)}, Lev: {lev}x, Margin: ₹{invested_inr}) from CoinDCX mobile app into Dashboard!")
+                                    save_active_positions(bot_state["active_positions"])
+
+                            # Update existing positions with live leverage, margin, and quantity from CoinDCX
+                            live_p_map = {p.get("pair"): p for p in live_open_positions if p.get("pair")}
+                            for pos in bot_state["active_positions"]:
+                                p_pair = pos.get("pair")
+                                if p_pair in live_p_map:
+                                    live_item = live_p_map[p_pair]
+                                    cur_lev = float(live_item.get("leverage") or 0)
+                                    cur_locked = float(live_item.get("locked_user_margin") or live_item.get("locked_margin") or 0)
+                                    cur_settle = float(live_item.get("settlement_currency_avg_price") or 102.0)
+                                    cur_act_qty = abs(float(live_item.get("active_pos") or 0))
+                                    if cur_lev > 0:
+                                        pos["leverage"] = cur_lev
+                                    if cur_locked > 0:
+                                        pos["invested"] = round(cur_locked * cur_settle, 2)
+                                    if cur_act_qty > 0:
+                                        pos["quantity"] = cur_act_qty
+
+                            # 2. Detect any positions closed externally on CoinDCX mobile app
+                            closed_externally = []
+                            for pos in list(bot_state["active_positions"]):
+                                p_pair = pos.get("pair")
+                                pos_age = now_ts - float(pos.get("entry_time", 0))
+                                if pos_age > 10.0 and p_pair and p_pair not in live_open_pairs:
+                                    closed_externally.append(pos)
+
+                            for c_pos in closed_externally:
+                                c_coin = c_pos.get("symbol")
+                                c_lev = c_pos.get("leverage", 7)
+                                c_side = c_pos.get("direction") or c_pos.get("side", "LONG")
+                                c_entry = float(c_pos.get("buy_price", 0))
+                                c_cur = float(c_pos.get("current_price") or c_entry)
+                                c_inv = float(c_pos.get("invested", 200.0))
+
+                                if c_side == "LONG":
+                                    c_gross_pct = ((c_cur - c_entry) / max(1e-6, c_entry)) * 100.0 * c_lev
+                                else:
+                                    c_gross_pct = ((c_entry - c_cur) / max(1e-6, c_entry)) * 100.0 * c_lev
+                                c_gross = c_inv * (c_gross_pct / 100.0)
+
+                                deductions = calculate_trade_deductions(c_inv, c_lev, c_gross)
+                                net_pnl = deductions["net_pnl"]
+                                net_pnl_pct = deductions["net_pnl_pct"]
+                                proceeds = round(c_inv + net_pnl, 2)
+                                bot_state["paper_balance"] = round(bot_state["paper_balance"] + proceeds, 2)
+
+                                close_rec = {
+                                    "type": "SELL" if c_side == "LONG" else "BUY_COVER",
+                                    "coin": c_coin,
+                                    "direction": c_side,
+                                    "price": c_cur,
+                                    "entry_price": c_entry,
+                                    "target": c_pos.get("target"),
+                                    "stop_loss": c_pos.get("stop_loss"),
+                                    "leverage": c_lev,
+                                    "amount": proceeds,
+                                    "gross_pnl": round(c_gross, 2),
+                                    "fee": deductions["exchange_fee"],
+                                    "tds": deductions["tds"],
+                                    "tax": deductions["govt_tax"],
+                                    "total_deductions": deductions["total_deductions"],
+                                    "pnl": round(net_pnl, 2),
+                                    "pnl_pct": round(net_pnl_pct, 2),
+                                    "reason": f"Manual Mobile App Close (Net: {net_pnl_pct:+.1f}%, ₹{net_pnl:+.2f})",
+                                    "time": get_ist_time_str(),
+                                    "timestamp": get_ist_datetime_str(),
+                                    "is_live": True
+                                }
+                                bot_state["trade_history"].insert(0, close_rec)
+                                bot_state["active_positions"] = [p for p in bot_state["active_positions"] if p.get("symbol") != c_coin]
+                                bot_state["active_position"] = bot_state["active_positions"][0] if bot_state["active_positions"] else None
+                                bot_state["last_signal"] = f"APP CLOSE [{c_coin}]"
+                                bot_state["last_reason"] = f"Detected {c_coin} closed on CoinDCX App. Reconciled successfully (+₹{net_pnl:.2f})."
+                                print(f"[🔄 2-Way Sync]: {c_coin} closed externally on CoinDCX mobile app! Reconciled dashboard.")
+                                record_paper_trade(close_rec, active_positions=bot_state["active_positions"])
+                                save_active_positions(bot_state["active_positions"])
+                    except Exception as sync_err:
+                        print(f"[2-Way Sync Notice]: {sync_err}")
+
+                # ==============================================================
+                # PHASE 1: MANAGE ALL ACTIVE POSITIONS (UP TO 5 SLOTS CONCURRENTLY)
                 # DYNAMIC RUNNER MODE (+15% to +30% TP) & 7% - 12% TRAILING RATINGS
                 # ==============================================================
                 positions_snapshot = list(bot_state["active_positions"])
                 active_pos_summaries = []
+
+                # Register active coins to real-time 0ms WebSocket stream
+                if ws_stream:
+                    active_coin_names = [p.get("symbol") for p in positions_snapshot if p.get("symbol")]
+                    if active_coin_names:
+                        ws_stream.update_active_coins(active_coin_names)
 
                 for pos in positions_snapshot:
                     pos_symbol = pos.get("symbol", "")
@@ -345,13 +552,17 @@ def bot_worker():
                     pos_dir = pos.get("direction") or pos.get("side", "LONG")
                     buy_price = float(pos.get("buy_price", 0))
 
-                    # Fetch live mark price from CoinDCX ticker, fallback to candles
+                    # Fetch live mark price: WebSocket 0ms priority -> CoinDCX Ticker -> Candles
                     current_price = buy_price
                     try:
-                        stats = client.get_futures_stats(pos_symbol)
-                        live_mk = float(stats.get("mark_price", 0) or stats.get("last_price", 0) or 0)
-                        if live_mk > 0:
-                            current_price = live_mk
+                        ws_p = ws_stream.get_live_price(pos_symbol, max_age_seconds=15.0) if ws_stream else None
+                        if ws_p and ws_p > 0:
+                            current_price = ws_p
+                        else:
+                            stats = client.get_futures_stats(pos_symbol)
+                            live_mk = float(stats.get("mark_price", 0) or stats.get("last_price", 0) or 0)
+                            if live_mk > 0:
+                                current_price = live_mk
                     except Exception:
                         pass
 
@@ -372,12 +583,18 @@ def bot_worker():
                     peak_pnl = max(float(pos.get("peak_pnl_pct", gross_pnl_pct)), gross_pnl_pct)
                     pos["peak_pnl_pct"] = peak_pnl
 
-                    # Calculate defense level: if trailing profit lock is active, preserve locked profit price!
+                    # Disciplined Stop-Loss Cut Level (-14.0% margin ROI or Trailing Profit Lock):
+                    hard_sl_roi = abs(float(getattr(config, "HARD_STOP_LOSS_MARGIN_PCT", 14.0)))
+                    pos["sl_roi_pct"] = hard_sl_roi
+                    pos["max_loss_inr"] = float(getattr(config, "MAX_LOSS_PER_TRADE_INR", 950.0))
+
                     if pos.get("trailing_stop") and float(pos.get("trailing_lock_pct", 0.0) or 0.0) > 0:
                         sl_defense = float(pos["trailing_stop"])
                     else:
-                        sl_defense = round(buy_price * (1.0 - (0.65 / pos_lev)), precision) if pos_dir == "LONG" else round(buy_price * (1.0 + (0.65 / pos_lev)), precision)
+                        sl_spot_move = (hard_sl_roi / pos_lev) / 100.0
+                        sl_defense = round(buy_price * (1.0 - sl_spot_move), precision) if pos_dir == "LONG" else round(buy_price * (1.0 + sl_spot_move), precision)
                     pos["sl_defense_price"] = sl_defense
+                    pos["stop_loss"] = sl_defense
 
                     target_p = float(pos.get("target") or (buy_price * 1.02))
                     tp_pct = ((target_p - buy_price) / max(1e-6, buy_price)) * 100.0 * pos_lev if pos_dir == "LONG" else ((buy_price - target_p) / max(1e-6, buy_price)) * 100.0 * pos_lev
@@ -420,25 +637,20 @@ def bot_worker():
                     # - At +40%+ PnL: Shift SL to max(+30%, peak - 8%) Profit Lock!
                     # - At +8% PnL: Early Breakeven Protection (+2% fee cushion)
                     # ----------------------------------------------------------
-                    effective_pnl = max(gross_pnl_pct, peak_pnl)
+                    # SAFE PROGRESSIVE TRAILING PROFIT-LOCK STAIRCASE
+                    # Must ONLY trigger on CURRENT live PnL, NEVER on stale historical peaks!
+                    # Must verify that current price is strictly on the profitable side of lock price!
+                    # ----------------------------------------------------------
                     target_lock_pnl = None
-
-                    staircase = getattr(config, "TRAILING_PROFIT_STAIRCASE", [
-                        (40.0, 30.0),
-                        (35.0, 24.0),
-                        (30.0, 18.0),
-                        (25.0, 12.0),
-                        (20.0, 10.0),
-                        (15.0, 7.0),
-                        (8.0, 2.0)
-                    ])
+                    staircase = getattr(config, "TRAILING_PROFIT_STAIRCASE", [])
 
                     for trigger_pct, lock_pct in staircase:
-                        if effective_pnl >= trigger_pct:
-                            if trigger_pct >= 40.0:
-                                target_lock_pnl = max(lock_pct, round(effective_pnl - 8.0, 1))
-                            else:
-                                target_lock_pnl = lock_pct
+                        if gross_pnl_pct >= trigger_pct:
+                            test_lock = lock_pct if trigger_pct < 45.0 else max(lock_pct, round(gross_pnl_pct - 8.0, 1))
+                            cand_lock_p = round(buy_price * (1.0 + (test_lock / 100.0) / pos_lev), precision) if pos_dir == "LONG" else round(buy_price * (1.0 - (test_lock / 100.0) / pos_lev), precision)
+                            # NEVER set a trailing stop if current price is already past it!
+                            if (pos_dir == "LONG" and current_price > cand_lock_p) or (pos_dir == "SHORT" and current_price < cand_lock_p):
+                                target_lock_pnl = test_lock
                             break
 
                     if target_lock_pnl is not None:
@@ -448,7 +660,7 @@ def bot_worker():
                             lock_price = round(buy_price * (1.0 + (target_lock_pnl / 100.0) / pos_lev), precision) if pos_dir == "LONG" else round(buy_price * (1.0 - (target_lock_pnl / 100.0) / pos_lev), precision)
                             pos["trailing_stop"] = lock_price
                             pos["sl_defense_price"] = lock_price
-                            print(f"[🔒 TRAILING PROFIT LOCK] {pos_symbol} reached +{effective_pnl:.1f}% -> SL shifted to +{target_lock_pnl:.1f}% locked profit (${lock_price:.4f})")
+                            print(f"[🔒 TRAILING PROFIT LOCK] {pos_symbol} reached +{gross_pnl_pct:.1f}% -> SL shifted to +{target_lock_pnl:.1f}% locked profit (${lock_price:.4f})")
 
                     # Mega-Runner Target Expansion (+18%+)
                     if gross_pnl_pct >= config.RUNNER_TRIGGER_PNL_PCT:
@@ -458,80 +670,49 @@ def bot_worker():
                         pos["target"] = extended_target
 
                     # ----------------------------------------------------------
-                    # SMART MARGIN DEFENSE AT -65% DRAWDOWN (DE-LEVERAGE BUFFER)
+                    # SMART MARGIN DEFENSE AT -48% DRAWDOWN (DE-LEVERAGE BUFFER)
                     # ----------------------------------------------------------
                     exit_trigger = None
                     exit_side = "sell" if pos_dir == "LONG" else "buy"
-                    min_tp_inr = getattr(config, "TARGET_PROFIT_MIN_INR", 200.0)
+                    min_tp_inr = getattr(config, "TARGET_PROFIT_MIN_INR", 25.0)
+                    sl_defense_threshold = float(getattr(config, "MARGIN_DEFENSE_DRAWDOWN_PCT", -48.0))
+                    # ----------------------------------------------------------
+                    # DISCIPLINED 1:1.75 RISK-TO-REWARD ENGINE (Trading-Limited)
+                    # ----------------------------------------------------------
+                    # 1. HARD STOP-LOSS CUTOFF: Max -14.0% margin ROI or -₹950 net loss (on ₹6,000 margin).
+                    # Gives healthy 2.0% spot room at 7x, avoiding tight wick stop-outs
+                    max_loss_inr = float(getattr(config, "MAX_LOSS_PER_TRADE_INR", 950.0))
+                    max_sl_roi = float(getattr(config, "HARD_STOP_LOSS_MARGIN_PCT", -14.0))
+                    if (gross_pnl_pct <= max_sl_roi or net_pnl <= -max_loss_inr) and not exit_trigger:
+                        exit_trigger = f"Disciplined Stop-Loss Hit ({gross_pnl_pct:.1f}% ROI / Net ₹{net_pnl:+.2f} Cut)"
 
-                    # 1. Check -65% Margin Drawdown Defense
-                    if gross_pnl_pct <= -65.0 and not pos.get("margin_defended", False):
-                        reversal_likely = True
-                        try:
-                            check_candles = client.get_candles(pair=pair, interval="15m", limit=15)
-                            if check_candles is not None and len(check_candles) >= 10:
-                                chk_df = calculate_indicators(check_candles)
-                                cur_rsi = float(chk_df.iloc[-1].get("rsi", 50))
-                                # Reversal is strongly probable if RSI is at boundary or stabilizing
-                                reversal_likely = (pos_dir == "LONG" and cur_rsi < 38.0) or (pos_dir == "SHORT" and cur_rsi > 62.0) or (35.0 <= cur_rsi <= 65.0)
-                        except Exception:
-                            reversal_likely = True
+                    # 2. TARGET PROFIT TAKE: +22.0% margin ROI or +₹1,320 target profit (Healthy positive RRR)
+                    target_tp_roi = float(getattr(config, "TARGET_PROFIT_ROI_PCT", 22.0))
+                    target_tp_max_inr = float(getattr(config, "TARGET_PROFIT_PER_TRADE_INR", 1320.0))
+                    if (gross_pnl_pct >= target_tp_roi or gross_pnl >= target_tp_max_inr) and not exit_trigger:
+                        exit_trigger = f"Target Profit Secured (+{gross_pnl_pct:.1f}% ROI / Net ₹{net_pnl:+.2f})!"
 
-                        topup_amount = round(invested * getattr(config, "MARGIN_DEFENSE_TOPUP_RATIO", 0.50), 2)
-                        avail_cash = float(bot_state.get("paper_balance", 0.0))
-
-                        if reversal_likely and avail_cash >= topup_amount:
-                            # Apply Defensive Margin Top-up: De-leverage to absorb drawdown
-                            bot_state["paper_balance"] = round(bot_state["paper_balance"] - topup_amount, 2)
-                            new_invested = round(invested + topup_amount, 2)
-                            new_lev = round(pos_lev * (invested / new_invested), 1)
-                            pos["invested"] = new_invested
-                            pos["leverage"] = new_lev
-                            pos["margin_defended"] = True
-                            pos["stop_loss"] = round(buy_price * (1.0 - (75.0 / 100.0) / new_lev), precision) if pos_dir == "LONG" else round(buy_price * (1.0 + (75.0 / 100.0) / new_lev), precision)
-                            defense_msg = f"[🛡️ MARGIN DEFENSE] Added ₹{topup_amount} margin to {pos_symbol}. De-leveraged {pos_lev}x -> {new_lev}x to absorb drawdown and await reversal!"
-                            print(defense_msg)
-                            bot_state["last_reason"] = defense_msg
-                            save_active_positions(bot_state["active_positions"])
-                            invested = new_invested
-                            pos_lev = new_lev
-                            gross_pnl_pct = gain_pct * pos_lev
-                            gross_pnl = invested * (gross_pnl_pct / 100.0)
-                        else:
-                            # No reversal potential or no margin: hit Stop-Loss Protection
-                            exit_trigger = f"Stop-Loss Protection at ${current_price:.4f} (-65% Drawdown Limit)"
-
-                    # 2. Check Catastrophic SL for Defended Positions (-75% Barrier)
-                    elif pos.get("margin_defended", False) and gross_pnl_pct <= -75.0:
-                        exit_trigger = f"Emergency Catastrophic Stop-Loss at ${current_price:.4f} (-75% Barrier)"
-
-                    # 3. Check Take Profit (Target Hit or Profit Target Reached)
+                    # 3. Check Trailing Profit Lock / Technical Target
                     active_sl = pos.get("trailing_stop", pos.get("stop_loss"))
                     target_p = pos.get("target")
-
-                    # RELIEF TAKE-PROFIT RULE:
-                    # If this trade had to be margin-defended at -65%, exit as soon as it recovers +5.0% to +8.0% ROI!
-                    # "Take the money and run" on recovered trades without risking a second drawdown!
-                    if pos.get("margin_defended", False) and gross_pnl_pct >= 5.0 and not exit_trigger:
-                        exit_trigger = f"Relief Take-Profit Hit (+{gross_pnl_pct:.1f}% ROI / ₹{gross_pnl:+.2f} Profit after -65% Defense Recovery)!"
 
                     if not exit_trigger:
                         if pos_dir == "LONG":
                             if target_p and current_price >= target_p:
-                                runner_note = f" [Runner Target +{pos.get('runner_target_pct', 25)}% Hit!]" if pos.get("is_runner") else ""
+                                runner_note = f" [Runner Target +{pos.get('runner_target_pct', 35)}% Hit!]" if pos.get("is_runner") else ""
                                 exit_trigger = f"Target Hit (${target_p:.4f}){runner_note} [Net ₹{net_pnl:+.2f}]!"
-                            elif gross_pnl >= min_tp_inr and gross_pnl_pct >= 8.0:
-                                exit_trigger = f"Profit Target Hit (+₹{gross_pnl:.2f} / +{gross_pnl_pct:.1f}% ROI)!"
+                            elif not pos.get("is_runner") and (gross_pnl >= target_tp_max_inr or gross_pnl_pct >= target_tp_roi):
+                                exit_trigger = f"Target Secured (+₹{gross_pnl:.2f} / +{gross_pnl_pct:.1f}% ROI)!"
                             elif active_sl and current_price <= active_sl:
                                 is_profit = active_sl > buy_price
                                 lbl = "Trailing Profit Lock" if is_profit else "Stop-Loss Protection"
                                 exit_trigger = f"{lbl} at ${active_sl:.4f}"
                         else: # SHORT
                             if target_p and current_price <= target_p:
-                                runner_note = f" [Runner Target +{pos.get('runner_target_pct', 25)}% Hit!]" if pos.get("is_runner") else ""
+                                runner_note = f" [Runner Target +{pos.get('runner_target_pct', 35)}% Hit!]" if pos.get("is_runner") else ""
                                 exit_trigger = f"Target Hit (${target_p:.4f}){runner_note} [Net ₹{net_pnl:+.2f}]!"
-                            elif gross_pnl >= min_tp_inr and gross_pnl_pct >= 8.0:
-                                exit_trigger = f"Profit Target Hit (+₹{gross_pnl:.2f} / +{gross_pnl_pct:.1f}% ROI)!"
+                            elif not pos.get("is_runner") and (gross_pnl >= target_tp_max_inr or gross_pnl_pct >= target_tp_roi):
+                                exit_trigger = f"Target Secured (+₹{gross_pnl:.2f} / +{gross_pnl_pct:.1f}% ROI)!"
                             elif active_sl and current_price >= active_sl:
                                 is_profit = active_sl < buy_price
                                 lbl = "Trailing Profit Lock" if is_profit else "Stop-Loss Protection"
@@ -572,8 +753,9 @@ def bot_worker():
                             "pnl": net_pnl,
                             "pnl_pct": net_pnl_pct,
                             "reason": full_reason,
-                            "time": datetime.now().strftime("%H:%M:%S"),
-                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            "time": get_ist_time_str(),
+                            "timestamp": get_ist_datetime_str(),
+                            "is_live": not config.DRY_RUN
                         }
                         bot_state["trade_history"].insert(0, exit_rec)
                         bot_state["active_positions"] = [p for p in bot_state["active_positions"] if p.get("symbol") != pos_symbol]
@@ -598,160 +780,317 @@ def bot_worker():
                 # ==============================================================
                 cur_count = len(bot_state.get("active_positions", []))
                 slots_needed = max_slots - cur_count
+                allow_new = bot_state.get("allow_new_trades", True)
 
-                if slots_needed > 0 and now_ts >= scan_cooldown_until:
-                    scan_cooldown_until = now_ts + 20  # Fast 20s scanner cadence
-                    held_coins = {p.get("symbol") for p in bot_state["active_positions"]}
-
-                    signals = scanner.scan_all_crypto_signals(min_confidence=dyn_min_conf, direction=preferred_dir, limit=25)
-                    valid_signals = [s for s in signals if s["coin"] not in held_coins and recent_coins.get(s["coin"], 0) < now_ts] if signals else []
-
-                    num_valid = len(valid_signals)
-                    # Adaptive Capital Sizing per User Requirement:
-                    # - 1 best trade in 24h: ₹5,000 margin
-                    # - 6-10 confirmed trades in market wave: ₹2,500 margin
-                    # - Normal: ₹3,000 margin
-                    if (cur_count == 0 and num_valid == 1) or (num_valid == 1 and slots_needed == 1):
-                        target_margin = getattr(config, "SOLO_SNIPER_INVESTMENT_INR", 5000.0)
-                        sizing_lbl = "Solo Sniper (₹5,000)"
-                    elif num_valid >= 6 or cur_count >= 6:
-                        target_margin = getattr(config, "MULTI_CONFIRMED_INVESTMENT_INR", 2500.0)
-                        sizing_lbl = "Multi-Slot Wave (₹2,500)"
+                if not allow_new:
+                    # MANAGE-ONLY MODE: Do NOT open any new trades; only manage existing active trades!
+                    if cur_count > 0:
+                        bot_state["last_signal"] = f"MANAGE-ONLY [{cur_count}/{max_slots} Active Positions]"
+                        bot_state["last_reason"] = f"🛡️ Manage-Only Mode: New trades paused. Actively managing {cur_count} open position(s) with dynamic TP & -48% Margin Defense."
                     else:
-                        target_margin = getattr(config, "INVESTMENT_PER_TRADE_INR", 3000.0)
-                        sizing_lbl = "Standard 10-Slot (₹3,000)"
+                        bot_state["last_signal"] = "MANAGE-ONLY (Standby - 0 Positions)"
+                        bot_state["last_reason"] = "🛡️ Manage-Only Mode: New trades paused by user. Standing by (0 active positions)."
+                else:
+                    # ==============================================================
+                    # CONTINUOUS ALPHA CAPITAL ROTATION (SLOT SWAPPING WHEN FULL)
+                    # When all 5 slots are full, keep scanning for 84%+ (4/5 MTF) setups.
+                    # If found and an existing trade is at >= +5.5% profit, bank profit & rotate!
+                    # ==============================================================
+                    if cur_count >= max_slots and getattr(config, "CAPITAL_ROTATION_ENABLED", True) and now_ts >= scan_cooldown_until:
+                        rotatable = [p for p in bot_state["active_positions"] if float(p.get("gross_pnl_pct", 0.0) or 0.0) >= getattr(config, "ROTATION_MIN_PROFIT_PCT", 5.5)]
+                        if rotatable:
+                            held_coins = {p.get("symbol") for p in bot_state["active_positions"]}
+                            rot_min_conf = getattr(config, "ROTATION_CANDIDATE_MIN_CONF", 84)
+                            rot_signals = scanner.scan_all_crypto_signals(min_confidence=rot_min_conf, direction=preferred_dir, limit=25)
+                            rot_valid = [s for s in (rot_signals or []) if s["coin"] not in held_coins and recent_coins.get(s["coin"], 0) < now_ts]
+                            if rot_valid:
+                                best_rot_cand = rot_valid[0]
+                                # Pick existing trade with highest profit to bank
+                                target_rot_pos = max(rotatable, key=lambda p: float(p.get("gross_pnl_pct", 0.0) or 0.0))
+                                r_symbol = target_rot_pos.get("symbol")
+                                r_dir = target_rot_pos.get("direction", "LONG")
+                                r_pnl_pct = float(target_rot_pos.get("gross_pnl_pct", 0.0) or 0.0)
+                                r_net_pnl = float(target_rot_pos.get("net_pnl", 0.0) or 0.0)
+                                r_invested = float(target_rot_pos.get("invested", 0.0) or 0.0)
+                                r_lev = target_rot_pos.get("leverage", 7)
+                                r_pair = target_rot_pos.get("pair")
+                                r_qty = target_rot_pos.get("quantity")
+                                r_cur_p = float(target_rot_pos.get("current_price", 0.0) or 0.0)
 
-                    for candidate in valid_signals:
-                        if len(bot_state["active_positions"]) >= max_slots:
-                            break
+                                print(f"[💎 CAPITAL ROTATION] Banking +{r_pnl_pct:.1f}% (+₹{r_net_pnl:.2f}) on {r_symbol} to enter {best_rot_cand['coin']} (Conf: {best_rot_cand.get('probability', 85)}%, MTF: {best_rot_cand.get('mtf_agreement', '4/5')})")
 
-                        avail_balance = max(0.0, float(bot_state.get("paper_balance", 0.0)))
-                        if avail_balance < 1000.0:
-                            # Keep safety reserve; stop opening if free margin is under ₹1,000
-                            break
+                                r_exit_side = "sell" if r_dir == "LONG" else "buy"
+                                if not config.DRY_RUN:
+                                    try:
+                                        client.place_futures_order(r_exit_side, pair=r_pair, quantity=r_qty, leverage=r_lev)
+                                    except Exception as rot_exit_err:
+                                        print(f"[ROTATION EXIT ERR]: {rot_exit_err}")
 
-                        invest_target = min(target_margin, avail_balance)
+                                r_proceeds = round(r_invested + r_net_pnl, 2)
+                                bot_state["paper_balance"] = round(bot_state["paper_balance"] + r_proceeds, 2)
+                                rot_reason = f"💎 Alpha Capital Rotation (+{r_pnl_pct:.1f}% Banked, ₹{r_net_pnl:+.2f} into {best_rot_cand['coin']})"
+                                r_exit_rec = {
+                                    "type": "SELL" if r_dir == "LONG" else "BUY_COVER",
+                                    "coin": r_symbol,
+                                    "direction": r_dir,
+                                    "price": r_cur_p,
+                                    "entry_price": float(target_rot_pos.get("buy_price", 0.0)),
+                                    "target": target_rot_pos.get("target"),
+                                    "stop_loss": target_rot_pos.get("stop_loss"),
+                                    "leverage": r_lev,
+                                    "amount": r_proceeds,
+                                    "gross_pnl": round(r_invested * (r_pnl_pct / 100.0), 2),
+                                    "fee": float(target_rot_pos.get("fee", 1.5)),
+                                    "tds": float(target_rot_pos.get("tds", 2.0)),
+                                    "tax": float(target_rot_pos.get("tax", 0.0)),
+                                    "total_deductions": float(target_rot_pos.get("total_deductions", 3.5)),
+                                    "pnl": r_net_pnl,
+                                    "pnl_pct": float(target_rot_pos.get("net_pnl_pct", r_pnl_pct)),
+                                    "reason": rot_reason,
+                                    "time": get_ist_time_str(),
+                                    "timestamp": get_ist_datetime_str(),
+                                    "is_live": not config.DRY_RUN
+                                }
+                                bot_state["trade_history"].insert(0, r_exit_rec)
+                                bot_state["active_positions"] = [p for p in bot_state["active_positions"] if p.get("symbol") != r_symbol]
+                                bot_state["active_position"] = bot_state["active_positions"][0] if bot_state["active_positions"] else None
+                                record_paper_trade(r_exit_rec, active_positions=bot_state["active_positions"])
+                                save_active_positions(bot_state["active_positions"])
+                                cur_count = len(bot_state["active_positions"])
+                                slots_needed = max_slots - cur_count
 
-                        c_coin = candidate["coin"]
-                        c_pair = f"B-{c_coin}_USDT"
-                        c_dir = candidate.get("direction", "UP").upper()
+                    if slots_needed > 0 and now_ts >= scan_cooldown_until:
+                        scan_cooldown_until = now_ts + 20  # Fast 20s scanner cadence
+                        held_coins = {p.get("symbol") for p in bot_state["active_positions"]}
 
-                        if float(candidate.get("volume_usdt", 0) or 0) < 500_000.0:
-                            continue
+                        signals = scanner.scan_all_crypto_signals(min_confidence=dyn_min_conf, direction=preferred_dir, limit=25)
+                        valid_signals = [s for s in signals if s["coin"] not in held_coins and recent_coins.get(s["coin"], 0) < now_ts] if signals else []
+                        num_valid = len(valid_signals)
 
-                        c_candles = client.get_candles(pair=c_pair, interval="15m", limit=30)
-                        if c_candles is not None and len(c_candles) >= 15:
-                            c_df = calculate_indicators(c_candles)
-                            last_row = c_df.iloc[-1]
-                            coin_rsi = float(last_row.get("rsi", 50))
+                        # Capital Sizing per User Requirement (Wallet ₹30,000, 5 Max Slots, ₹6,000 margin per trade):
+                        if (cur_count == 0 and num_valid == 1) or (num_valid == 1 and slots_needed == 1):
+                            target_margin = getattr(config, "SOLO_SNIPER_INVESTMENT_INR", 6000.0)
+                            sizing_lbl = f"Solo Sniper (₹{target_margin:.0f})"
+                        elif num_valid >= 3 or cur_count >= 3:
+                            target_margin = getattr(config, "MULTI_CONFIRMED_INVESTMENT_INR", 6000.0)
+                            sizing_lbl = f"Multi-Slot Wave (₹{target_margin:.0f})"
+                        else:
+                            target_margin = getattr(config, "INVESTMENT_PER_TRADE_INR", 6000.0)
+                            sizing_lbl = f"Standard Slot (₹{target_margin:.0f})"
 
-                            # Momentum confirmation filter:
-                            # LONG: RSI between 38 and 75 (healthy momentum, not overbought)
-                            # SHORT: RSI between 25 and 62 (healthy breakdown, not oversold)
-                            if c_dir == "UP" and not (38.0 <= coin_rsi <= 75.0):
-                                continue
-                            if c_dir == "DOWN" and not (25.0 <= coin_rsi <= 62.0):
-                                continue
+                        for candidate in valid_signals:
+                            if len(bot_state["active_positions"]) >= max_slots:
+                                break
 
-                            live_stats = client.get_futures_stats(c_coin)
-                            live_p = float(live_stats.get("mark_price", 0) or live_stats.get("last_price", 0) or 0)
-                            if live_p <= 0:
-                                live_p = float(last_row["close"])
+                            avail_balance = max(0.0, float(bot_state.get("paper_balance", 0.0)))
+                            deployed_margin = sum(float(p.get("invested", 0)) for p in bot_state["active_positions"])
+                            total_wallet = avail_balance + deployed_margin
+                            safe_reserve_min = total_wallet * getattr(config, "SAFE_MARGIN_RATIO", 0.0)
+                            max_trade_cap = total_wallet * getattr(config, "MAX_CAPITAL_IN_TRADE_RATIO", 1.0)
 
-                            pos_lev = candidate.get("adaptive_leverage", dyn_lev)
+                            if (deployed_margin + target_margin) > (max_trade_cap + 1.0):
+                                break
+                            if (avail_balance - target_margin) < (safe_reserve_min - 1.0):
+                                break
+
+                            invest_target = min(target_margin, avail_balance)
+
+                            c_coin = candidate["coin"]
+                            c_pair = f"B-{c_coin}_USDT"
+                            c_dir = candidate.get("direction", "UP").upper()
                             pos_dir = "LONG" if c_dir == "UP" else "SHORT"
-                            prob = candidate.get("probability", 85)
-                            precision = 6 if live_p < 1.0 else (4 if live_p < 50.0 else 2)
 
-                            # Calculate Target Price: Front-run predicted move by 75% or target ₹200-₹500 profit
-                            front_run = getattr(config, "FRONT_RUN_RATIO", 0.75)
-                            pred_target = float(candidate.get("target_price", 0) or 0)
-                            target_profit_goal = 350.0 if c_coin in ["BTC", "WBTC"] else 250.0
-                            target_roi_pct = min(25.0, max(8.0, (target_profit_goal / invest_target) * 100.0))
-                            target_move_pct = target_roi_pct / max(1, pos_lev)
+                            # 0. STRICT DAILY CANDLE TREND GUARD (Never fight the daily candle):
+                            # Block LONGs if coin is in a daily downtrend (change_24h < -0.3%) or if market is in a macro downtrend
+                            c_chg_24 = float(candidate.get("change_24h", 0) or 0)
+                            if pos_dir == "LONG" and (c_chg_24 < -0.3 or preferred_dir == "DOWN"):
+                                continue
+                            if pos_dir == "SHORT" and (c_chg_24 > 0.5 or preferred_dir == "UP"):
+                                continue
 
-                            if pred_target > 0 and ((pos_dir == "LONG" and pred_target > live_p) or (pos_dir == "SHORT" and pred_target < live_p)):
-                                target_price = round(live_p + (pred_target - live_p) * front_run, precision)
-                            elif pos_dir == "LONG":
-                                target_price = round(live_p * (1.0 + (target_move_pct / 100.0)), precision)
-                            else:
-                                target_price = round(live_p * (1.0 - (target_move_pct / 100.0)), precision)
+                            # 1. PORTFOLIO DIRECTIONAL BALANCE GUARD (Anti-Cascade Shield):
+                            # Allow up to 4 positions in the dominant macro trend direction
+                            active_same_dir = sum(1 for p in bot_state["active_positions"] if (p.get("direction") or p.get("side")) == pos_dir)
+                            max_dir_cap = getattr(config, "MAX_SAME_DIRECTION_POSITIONS", 4)
+                            if active_same_dir >= max_dir_cap:
+                                continue
 
-                            # User does not set tight SL; position has breathing room with -65% Margin Defense
-                            stop_loss = None
-                            order_side = "buy" if pos_dir == "LONG" else "sell"
+                            # 2. BITCOIN KING MACRO REGIME GUARD:
+                            # If Bitcoin 1h is in a confirmed pullback, block altcoin LONGs unless 5/5 unanimous MTF confluence
+                            btc_macro = scanner.get_btc_macro_regime(client)
+                            if btc_macro.get("regime") == "BEARISH" and pos_dir == "LONG" and c_coin not in ["BTC", "WBTC"]:
+                                if candidate.get("confidence_tier") != "A+":
+                                    continue
 
-                            qty, spend = calculate_futures_trade_qty(c_coin, live_p, target_margin_inr=invest_target, leverage=pos_lev)
-                            if spend > avail_balance:
-                                spend = avail_balance
-                            # Deduct margin from paper balance
-                            bot_state["paper_balance"] = round(max(0.0, bot_state["paper_balance"] - spend), 2)
+                            # 3. HIGHER-TIMEFRAME MACRO TREND SHIELD (Anti-Falling Knife):
+                            macro_chk = scanner.check_macro_daily_trend(c_coin, client)
+                            if pos_dir == "LONG" and macro_chk.get("is_falling_knife", False):
+                                continue
+                            if pos_dir == "SHORT" and macro_chk.get("is_parabolic_pump", False):
+                                continue
 
-                            if not config.DRY_RUN:
-                                try:
-                                    live_order = client.place_futures_order(order_side, pair=c_pair, quantity=qty, leverage=pos_lev)
-                                    print(f"[LIVE AUTONOMOUS {pos_dir} ORDER]: {c_coin} Qty={qty} Lev={pos_lev}x -> {live_order}")
-                                except Exception as live_err:
-                                    print(f"[LIVE AUTONOMOUS ORDER ERROR]: {live_err}")
+                            if float(candidate.get("volume_usdt", 0) or 0) < 500_000.0:
+                                continue
 
-                            entry_ts = time.time()
-                            mtf_lbl = candidate.get("mtf_agreement", "MTF")
-                            new_pos = {
-                                "symbol": c_coin,
-                                "pair": c_pair,
-                                "direction": pos_dir,
-                                "buy_price": live_p,
-                                "current_price": live_p,
-                                "quantity": qty,
-                                "invested": spend,
-                                "leverage": pos_lev,
-                                "target": target_price,
-                                "stop_loss": stop_loss,
-                                "trailing_stop": None,
-                                "margin_defended": False,
-                                "peak_price": live_p,
-                                "valley_price": live_p,
-                                "peak_pnl_pct": 0.0,
-                                "gross_pnl_pct": 0.0,
-                                "net_pnl": 0.0,
-                                "net_pnl_pct": 0.0,
-                                "sl_defense_price": round(live_p * (1.0 - (0.65 / pos_lev)), precision) if pos_dir == "LONG" else round(live_p * (1.0 + (0.65 / pos_lev)), precision),
-                                "tp_target_pct": round(((target_price - live_p) / max(1e-6, live_p)) * 100.0 * pos_lev, 2) if pos_dir == "LONG" else round(((live_p - target_price) / max(1e-6, live_p)) * 100.0 * pos_lev, 2),
-                                "trailing_lock_pct": 0.0,
-                                "probability": prob,
-                                "mtf_agreement": mtf_lbl,
-                                "entry_time": entry_ts,
-                                "time": datetime.now().strftime("%H:%M:%S")
-                            }
-                            bot_state["active_positions"].append(new_pos)
-                            bot_state["active_position"] = bot_state["active_positions"][0]
-                            bot_state["selected_coin"] = c_coin
-                            bot_state["selected_pair"] = c_pair
-                            bot_state["last_signal"] = f"AUTONOMOUS {pos_dir} [{c_coin}] ({len(bot_state['active_positions'])}/{max_slots} Slots)"
-                            bot_state["last_reason"] = f"UserMirror {mtf_lbl} ({prob}% {pos_dir}) {pos_lev}x Lev: Entry ${live_p}, Target ${target_price} (Aim ₹200-₹500), -65% Margin Defense"
+                            c_candles = client.get_candles(pair=c_pair, interval="15m", limit=30)
+                            if c_candles is not None and len(c_candles) >= 15:
+                                c_df = calculate_indicators(c_candles)
+                                last_row = c_df.iloc[-1]
+                                coin_rsi = float(last_row.get("rsi", 50))
+                                c_ema9 = float(last_row.get("ema_fast", 0))
 
-                            trade_rec = {
-                                "type": "BUY" if pos_dir == "LONG" else "SELL_SHORT",
-                                "coin": c_coin,
-                                "direction": pos_dir,
-                                "price": live_p,
-                                "entry_price": live_p,
-                                "target": target_price,
-                                "stop_loss": stop_loss,
-                                "leverage": pos_lev,
-                                "amount": spend,
-                                "note": f"UserMirror {mtf_lbl} ({prob}% {pos_dir}) {pos_lev}x Lev: Target ${target_price}, -65% Margin Defense",
-                                "time": datetime.now().strftime("%H:%M:%S"),
-                                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            }
-                            bot_state["trade_history"].insert(0, trade_rec)
-                            record_paper_trade(trade_rec, active_positions=bot_state["active_positions"])
-                            save_active_positions(bot_state["active_positions"])
+                                # 4. ANTI-FOMO MOMENTUM & VALUE GATES:
+                                # Never enter overbought tops (RSI > 65) or oversold bottom traps (RSI < 35)
+                                rsi_long_min = getattr(config, "RSI_LONG_MIN", 38.0)
+                                rsi_long_max = getattr(config, "RSI_LONG_MAX", 65.0)
+                                rsi_short_min = getattr(config, "RSI_SHORT_MIN", 35.0)
+                                rsi_short_max = getattr(config, "RSI_SHORT_MAX", 62.0)
+
+                                if pos_dir == "LONG" and not (rsi_long_min <= coin_rsi <= rsi_long_max):
+                                    continue
+                                if pos_dir == "SHORT" and not (rsi_short_min <= coin_rsi <= rsi_short_max):
+                                    continue
+
+                                live_stats = client.get_futures_stats(c_coin)
+                                live_p = float(live_stats.get("mark_price", 0) or live_stats.get("last_price", 0) or 0)
+                                if live_p <= 0:
+                                    live_p = float(last_row["close"])
+
+                                # Pullback-to-Value Gate: Price must be within 1.8% of 15m EMA9 (buy value, never chase rockets)
+                                if c_ema9 > 0 and live_p > 0:
+                                    pullback_dev = abs((live_p - c_ema9) / c_ema9) * 100.0
+                                    max_dev = getattr(config, "MAX_EMA_PULLBACK_DEVIATION_PCT", 1.8)
+                                    if pullback_dev > max_dev:
+                                        continue
+
+                                # 5. VOLATILITY-ADAPTIVE LEVERAGE:
+                                pos_lev = candidate.get("adaptive_leverage", dyn_lev)
+                                c_chg = abs(float(candidate.get("change_24h", 0) or 0))
+                                if c_chg >= 10.0 and c_coin not in ["BTC", "WBTC", "ETH"]:
+                                    pos_lev = min(pos_lev, getattr(config, "MAX_HIGH_BETA_LEVERAGE", 5))
+                                prob = candidate.get("probability", 85)
+                                precision = 6 if live_p < 1.0 else (4 if live_p < 50.0 else 2)
+
+                                # Dynamic Target Scaling for Healthy 1:1.5+ Positive Risk-Reward (₹6,000 margin per trade):
+                                # Every winner yields +₹750 to +₹1,100 net in pocket, comfortably outpacing any stop-loss!
+                                front_run = getattr(config, "FRONT_RUN_RATIO", 0.75)
+                                c_prob = float(candidate.get("probability", 85) or 85)
+                                if c_prob >= 92.0:
+                                    target_roi_pct = 26.0  # +26.0% ROI (+₹1,560 gross, ~+₹1,100 net)
+                                elif c_prob >= 88.0:
+                                    target_roi_pct = 22.0  # +22.0% ROI (+₹1,320 gross, ~+₹920 net)
+                                elif c_prob >= 86.0:
+                                    target_roi_pct = 20.0  # +20.0% ROI (+₹1,200 gross, ~+₹840 net)
+                                else:
+                                    target_roi_pct = float(getattr(config, "TARGET_PROFIT_ROI_PCT", 18.0))
+
+                                target_move_pct = target_roi_pct / max(1, pos_lev)
+
+                                pred_target = float(candidate.get("target_price", 0) or 0)
+                                if pred_target > 0 and ((pos_dir == "LONG" and pred_target > live_p) or (pos_dir == "SHORT" and pred_target < live_p)):
+                                    predicted_move_pct = abs((pred_target - live_p) / live_p) * 100.0
+                                    capped_move_pct = min(target_move_pct, predicted_move_pct * front_run)
+                                    target_price = round(live_p * (1.0 + (capped_move_pct / 100.0)), precision) if pos_dir == "LONG" else round(live_p * (1.0 - (capped_move_pct / 100.0)), precision)
+                                elif pos_dir == "LONG":
+                                    target_price = round(live_p * (1.0 + (target_move_pct / 100.0)), precision)
+                                else:
+                                    target_price = round(live_p * (1.0 - (target_move_pct / 100.0)), precision)
+
+                                # Disciplined Stop-Loss: -14.0% margin ROI (Healthy 2.0% spot room at 7x, avoiding false wick stops)
+                                max_sl_roi = abs(float(getattr(config, "HARD_STOP_LOSS_MARGIN_PCT", -14.0)))
+                                sl_spot_move = (max_sl_roi / max(1, pos_lev)) / 100.0
+                                hard_sl_price = round(live_p * (1.0 - sl_spot_move), precision) if pos_dir == "LONG" else round(live_p * (1.0 + sl_spot_move), precision)
+                                stop_loss = hard_sl_price
+                                order_side = "buy" if pos_dir == "LONG" else "sell"
+
+                                qty, spend = calculate_futures_trade_qty(c_coin, live_p, target_margin_inr=invest_target, leverage=pos_lev)
+                                if spend > avail_balance:
+                                    spend = avail_balance
+                                # Deduct margin from paper balance
+                                bot_state["paper_balance"] = round(max(0.0, bot_state["paper_balance"] - spend), 2)
+
+                                if not config.DRY_RUN:
+                                    try:
+                                        live_order = client.place_futures_order(order_side, pair=c_pair, quantity=qty, leverage=pos_lev)
+                                        print(f"[LIVE AUTONOMOUS {pos_dir} ORDER]: {c_coin} Qty={qty} Lev={pos_lev}x -> {live_order}")
+                                        is_err = False
+                                        if isinstance(live_order, dict):
+                                            if live_order.get("status") == "error" or "code" in live_order:
+                                                is_err = True
+                                        elif not live_order:
+                                            is_err = True
+                                        if is_err:
+                                            err_msg = live_order.get("message") if isinstance(live_order, dict) else "Exchange order rejection"
+                                            print(f"[LIVE ORDER REJECTED BY EXCH]: {c_coin} -> {err_msg}")
+                                            bot_state["paper_balance"] = round(bot_state["paper_balance"] + spend, 2)
+                                            continue
+                                    except Exception as live_err:
+                                        print(f"[LIVE AUTONOMOUS ORDER ERROR]: {live_err}")
+                                        bot_state["paper_balance"] = round(bot_state["paper_balance"] + spend, 2)
+                                        continue
+
+                                entry_ts = time.time()
+                                mtf_lbl = candidate.get("mtf_agreement", "MTF")
+                                new_pos = {
+                                    "symbol": c_coin,
+                                    "pair": c_pair,
+                                    "direction": pos_dir,
+                                    "buy_price": live_p,
+                                    "current_price": live_p,
+                                    "quantity": qty,
+                                    "invested": spend,
+                                    "leverage": pos_lev,
+                                    "target": target_price,
+                                    "stop_loss": hard_sl_price,
+                                    "trailing_stop": None,
+                                    "margin_defended": False,
+                                    "peak_price": live_p,
+                                    "valley_price": live_p,
+                                    "peak_pnl_pct": 0.0,
+                                    "gross_pnl_pct": 0.0,
+                                    "net_pnl": 0.0,
+                                    "net_pnl_pct": 0.0,
+                                    "sl_defense_price": hard_sl_price,
+                                    "sl_roi_pct": max_sl_roi,
+                                    "max_loss_inr": float(getattr(config, "MAX_LOSS_PER_TRADE_INR", 950.0)),
+                                    "tp_target_pct": round(((target_price - live_p) / max(1e-6, live_p)) * 100.0 * pos_lev, 2) if pos_dir == "LONG" else round(((live_p - target_price) / max(1e-6, live_p)) * 100.0 * pos_lev, 2),
+                                    "trailing_lock_pct": 0.0,
+                                    "probability": prob,
+                                    "mtf_agreement": mtf_lbl,
+                                    "entry_time": entry_ts,
+                                    "time": get_ist_time_str()
+                                }
+                                bot_state["active_positions"].append(new_pos)
+                                bot_state["active_position"] = bot_state["active_positions"][0]
+                                bot_state["selected_coin"] = c_coin
+                                bot_state["selected_pair"] = c_pair
+                                bot_state["last_signal"] = f"AUTONOMOUS {pos_dir} [{c_coin}] ({len(bot_state['active_positions'])}/{max_slots} Slots)"
+                                bot_state["last_reason"] = f"Disciplined {mtf_lbl} ({prob}% {pos_dir}) {pos_lev}x Lev: Entry ${live_p}, Target ${target_price} (+₹{spend*0.14:.0f} TP), SL: ${hard_sl_price} (Max -₹28 Cut)"
+
+                                trade_rec = {
+                                    "type": "BUY" if pos_dir == "LONG" else "SELL_SHORT",
+                                    "coin": c_coin,
+                                    "direction": pos_dir,
+                                    "price": live_p,
+                                    "entry_price": live_p,
+                                    "target": target_price,
+                                    "stop_loss": stop_loss,
+                                    "leverage": pos_lev,
+                                    "amount": spend,
+                                    "note": f"UserMirror {mtf_lbl} ({prob}% {pos_dir}) {pos_lev}x Lev: Target ${target_price}, -48% Margin Defense",
+                                    "time": get_ist_time_str(),
+                                    "timestamp": get_ist_datetime_str(),
+                                    "is_live": not config.DRY_RUN
+                                }
+                                bot_state["trade_history"].insert(0, trade_rec)
+                                record_paper_trade(trade_rec, active_positions=bot_state["active_positions"])
+                                save_active_positions(bot_state["active_positions"])
 
             except Exception as e:
                 print(f"[Autonomous Worker Error] {e}")
 
-        time.sleep(10)
+        # Hyper-fast 3s refresh when active positions exist for real-time mobile app sync
+        time.sleep(3 if bot_state.get("active_positions") else 10)
 
 worker_thread = threading.Thread(target=bot_worker, daemon=True)
 worker_thread.start()
@@ -799,7 +1138,7 @@ def alert_monitor_worker():
                                 "rsi": s.get("rsi", 50),
                                 "confluences": s.get("confluences", []),
                                 "timestamp": int(now * 1000),
-                                "time_str": datetime.now().strftime("%H:%M:%S")
+                                "time_str": get_ist_time_str()
                             }
                             alert_state["alerts"].insert(0, alert_item)
                             alert_state["last_notified"][coin] = now
@@ -820,7 +1159,7 @@ def balance_sync_worker():
     Asynchronous background worker to sync real CoinDCX balances
     so HTTP /api/status endpoint returns in 0.1ms without blocking on external network calls.
     """
-    time.sleep(3)
+    time.sleep(1)
     while True:
         try:
             client = CoinDCXClient()
@@ -841,7 +1180,7 @@ def balance_sync_worker():
                     bot_state["real_connected"] = False
         except Exception as e:
             pass
-        time.sleep(60)
+        time.sleep(20)
 
 balance_thread = threading.Thread(target=balance_sync_worker, daemon=True)
 balance_thread.start()
@@ -1149,6 +1488,8 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
             bot_state["dry_run"] = config.DRY_RUN
             bot_state["risk_mode"] = config.CURRENT_RISK_MODE
             bot_state["risk_profile"] = config.RISK_PROFILES.get(config.CURRENT_RISK_MODE, {})
+            bot_state["ws_connected"] = ws_stream.is_connected if ws_stream else False
+            bot_state["ws_prices"] = ws_stream.get_all_live_prices() if ws_stream else {}
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -1264,12 +1605,26 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
 
         if path == "/api/bot/toggle":
             bot_state["is_running"] = not bot_state["is_running"]
-            save_active_positions(bot_state.get("active_positions", []), is_running=bot_state["is_running"])
+            save_active_positions(bot_state.get("active_positions", []), is_running=bot_state["is_running"], allow_new_trades=bot_state.get("allow_new_trades", True))
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
-            self.wfile.write(json.dumps({"is_running": bot_state["is_running"]}).encode("utf-8"))
+            self.wfile.write(json.dumps({"is_running": bot_state["is_running"], "allow_new_trades": bot_state.get("allow_new_trades", True)}).encode("utf-8"))
+            return
+
+        elif path == "/api/bot/toggle_new_trades":
+            bot_state["allow_new_trades"] = not bot_state.get("allow_new_trades", True)
+            save_active_positions(bot_state.get("active_positions", []), is_running=bot_state["is_running"], allow_new_trades=bot_state["allow_new_trades"])
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "success",
+                "allow_new_trades": bot_state["allow_new_trades"],
+                "message": "Auto-trading active: New trades allowed" if bot_state["allow_new_trades"] else "Manage-only mode active: New trades paused"
+            }).encode("utf-8"))
             return
 
         elif path == "/api/bot/select_coin":
@@ -1390,7 +1745,7 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
                 "peak_price": curr_price,
                 "tp_pct": tp_pct,
                 "sl_pct": sl_pct,
-                "time": datetime.now().strftime("%H:%M:%S")
+                "time": get_ist_time_str()
             }
             bot_state["selected_coin"] = coin
             bot_state["selected_pair"] = pair
@@ -1402,8 +1757,9 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
                 "price": curr_price,
                 "amount": actual_spend,
                 "note": f"Manual {side} {lev}x: Target ${target_p}, SL ${stop_p}",
-                "time": datetime.now().strftime("%H:%M:%S"),
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                "time": get_ist_time_str(),
+                "timestamp": get_ist_datetime_str(),
+                "is_live": not config.DRY_RUN
             }
             bot_state["trade_history"].insert(0, trade_rec)
             record_paper_trade(trade_rec, active_positions=bot_state.get("active_positions", []))
@@ -1504,8 +1860,9 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
                 "pnl": net_pnl,
                 "pnl_pct": net_pnl_pct,
                 "reason": f"Manual Close Button (Net PnL: {net_pnl_pct:+.1f}%, ₹{net_pnl:+.2f} {deduct_desc})",
-                "time": datetime.now().strftime("%H:%M:%S"),
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                "time": get_ist_time_str(),
+                "timestamp": get_ist_datetime_str(),
+                "is_live": not config.DRY_RUN
             }
             bot_state["trade_history"].insert(0, close_rec)
             bot_state["active_positions"] = [p for p in bot_state.get("active_positions", []) if p.get("symbol") != coin_sym]
@@ -1529,9 +1886,9 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
         elif path == "/api/paper_trades/clear":
             try:
                 start_wal = getattr(config, "STARTING_WALLET_INR", 30000.0)
-                max_s = getattr(config, "MAX_OPEN_POSITIONS", 10)
+                max_s = getattr(config, "MAX_OPEN_POSITIONS", 5)
                 payload = {
-                    "updated_at": datetime.now().isoformat(),
+                    "updated_at": get_ist_now().isoformat(),
                     "paper_balance": start_wal,
                     "starting_balance": start_wal,
                     "max_slots": max_s,

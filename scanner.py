@@ -126,7 +126,13 @@ def get_all_cryptos(search: str = "", sort_by: str = "volume", limit: int = 1000
             continue
 
     # Sorting
-    if sort_by == "gainers":
+    allowed = getattr(config, "ALLOWED_COINS", [])
+    if sort_by == "majors":
+        majors_res = [r for r in results if r["coin"] in allowed]
+        allowed_idx = {c: i for i, c in enumerate(allowed)}
+        majors_res.sort(key=lambda x: allowed_idx.get(x["coin"], 999))
+        return majors_res[:limit]
+    elif sort_by == "gainers":
         results.sort(key=lambda x: x["change_24h"], reverse=True)
     elif sort_by == "losers":
         results.sort(key=lambda x: x["change_24h"])
@@ -191,6 +197,138 @@ def get_market_radar(limit: int = 10):
     _RADAR_CACHE["data"] = res
     _RADAR_CACHE["timestamp"] = now
     return res
+
+
+_BTC_REGIME_CACHE = {
+    "regime": "NEUTRAL",
+    "rsi": 50.0,
+    "timestamp": 0
+}
+
+def get_btc_macro_regime(client=None) -> Dict[str, Any]:
+    """
+    Evaluates Bitcoin (BTC) 1h & 15m trend, EMA21, and RSI to determine macro market regime.
+    Protects altcoins from taking wrong-way LONGs when Bitcoin is dumping.
+    """
+    global _BTC_REGIME_CACHE
+    now = time.time()
+    if _BTC_REGIME_CACHE["timestamp"] and (now - _BTC_REGIME_CACHE["timestamp"]) < 45.0:
+        return _BTC_REGIME_CACHE
+
+    if not getattr(config, "BTC_REGIME_FILTER_ENABLED", True):
+        return {"regime": "NEUTRAL", "rsi": 50.0, "timestamp": now}
+
+    try:
+        from coindcx_client import CoinDCXClient
+        from strategy import calculate_indicators
+        c = client or CoinDCXClient()
+        df = c.get_candles(pair="B-BTC_USDT", interval="1h", limit=25)
+        if df is not None and len(df) >= 15:
+            ind = calculate_indicators(df)
+            last = ind.iloc[-1]
+            close = float(last["close"])
+            ema21 = float(last["ema_slow"])
+            rsi = float(last["rsi"])
+
+            bearish_rsi = getattr(config, "BTC_BEARISH_RSI_THRESHOLD", 48.0)
+            bullish_rsi = getattr(config, "BTC_BULLISH_RSI_THRESHOLD", 52.0)
+
+            if close > ema21 and rsi >= bullish_rsi:
+                regime = "BULLISH" # Altcoin LONGs favored
+            elif close < ema21 or rsi <= bearish_rsi:
+                regime = "BEARISH" # Block Altcoin LONGs, prioritize SHORTS
+            else:
+                regime = "NEUTRAL"
+
+            res = {
+                "regime": regime,
+                "rsi": round(rsi, 1),
+                "close": close,
+                "ema21": round(ema21, 2),
+                "timestamp": now
+            }
+            _BTC_REGIME_CACHE = res
+            return res
+    except Exception as e:
+        print(f"[BTC Macro Guard Notice]: {e}")
+
+    return {"regime": "NEUTRAL", "rsi": 50.0, "timestamp": now}
+
+
+_MACRO_TREND_CACHE: Dict[str, Any] = {}
+
+def check_macro_daily_trend(coin: str, client=None) -> Dict[str, Any]:
+    """
+    Evaluates 7-day to 30-day macro trend from daily (1d) candles to prevent buying
+    multi-week falling knives (like FET -18% or ZRO -7% on Render).
+    """
+    global _MACRO_TREND_CACHE
+    now = time.time()
+    clean_coin = coin.upper().replace("B-", "").replace("I-", "").replace("_USDT", "").replace("_INR", "").replace("USDT", "")
+
+    if clean_coin in _MACRO_TREND_CACHE:
+        entry = _MACRO_TREND_CACHE[clean_coin]
+        if (now - entry.get("timestamp", 0)) < 300.0:  # 5 min cache
+            return entry
+
+    res = {
+        "trend": "NEUTRAL",
+        "ret_7d": 0.0,
+        "ret_14d": 0.0,
+        "price_above_ema": True,
+        "is_falling_knife": False,
+        "is_parabolic_pump": False,
+        "timestamp": now
+    }
+
+    if not getattr(config, "MACRO_TREND_FILTER_ENABLED", True):
+        return res
+
+    try:
+        from coindcx_client import CoinDCXClient
+        c = client or CoinDCXClient()
+        candles = c.get_futures_candles(clean_coin, interval="1d", limit=20)
+        if candles and len(candles) >= 8:
+            cur_p = float(candles[0].get("close", 0))
+            idx_7d = min(len(candles) - 1, 6)
+            idx_14d = min(len(candles) - 1, 13)
+            p_7d = float(candles[idx_7d].get("close", cur_p))
+            p_14d = float(candles[idx_14d].get("close", cur_p))
+
+            ret_7d = round(((cur_p - p_7d) / max(1e-6, p_7d)) * 100.0, 2)
+            ret_14d = round(((cur_p - p_14d) / max(1e-6, p_14d)) * 100.0, 2)
+
+            closes = [float(cd.get("close", 0)) for cd in candles[:10] if float(cd.get("close", 0)) > 0]
+            avg_10d = sum(closes) / max(1, len(closes))
+            price_above_ema = cur_p >= avg_10d
+
+            max_drop = getattr(config, "MAX_ALLOWABLE_7D_DOWNTREND_PCT", -6.0)
+            is_falling_knife = (ret_7d <= max_drop) or (ret_14d <= (max_drop * 1.5) and not price_above_ema)
+            is_parabolic_pump = ret_7d >= 18.0
+
+            if is_falling_knife:
+                trend = "DOWNTREND"
+            elif price_above_ema and ret_7d > 1.0:
+                trend = "UPTREND"
+            else:
+                trend = "NEUTRAL"
+
+            res = {
+                "trend": trend,
+                "ret_7d": ret_7d,
+                "ret_14d": ret_14d,
+                "price_above_ema": price_above_ema,
+                "is_falling_knife": is_falling_knife,
+                "is_parabolic_pump": is_parabolic_pump,
+                "timestamp": now
+            }
+            _MACRO_TREND_CACHE[clean_coin] = res
+            return res
+    except Exception as e:
+        print(f"[Macro Trend Guard Notice for {clean_coin}]: {e}")
+
+    return res
+
 
 
 def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", limit: int = 35) -> List[Dict[str, Any]]:
@@ -259,22 +397,34 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     candidate_symbols = []
     seen = set()
 
+    # Priority 1: Ensure ALL whitelisted ALLOWED_COINS are always scanned and evaluated!
+    allowed = getattr(config, "ALLOWED_COINS", None)
+    if allowed:
+        ticker_map = {t.get("symbol", "").replace("USDT", ""): t for t in tickers if t.get("symbol", "").endswith("USDT")}
+        for sym in allowed:
+            t = ticker_map.get(sym)
+            if t and sym not in seen:
+                seen.add(sym)
+                candidate_symbols.append((sym, float(t.get("priceChangePercent", 0) or 0), float(t.get("quoteVolume", 0) or 0)))
+
+    # Priority 2: Also add top liquid candidates from volume and gainers pools
     for pool in [usdt_pairs_sorted_gain[:15], usdt_pairs_sorted_vol[:20], usdt_pairs_sorted_loss[:15]]:
         for item in pool:
             sym = item.get("symbol", "").replace("USDT", "")
+            if allowed and sym not in allowed:
+                continue
             if sym.isascii() and sym.isalnum() and sym not in seen:
                 seen.add(sym)
                 candidate_symbols.append((sym, float(item.get("priceChangePercent", 0)), float(item.get("quoteVolume", 0))))
 
     client = CoinDCXClient()
 
-    def evaluate_coin_multi_timeframe(coin_sym: str, chg_24h: float, c_1h: list) -> Dict[str, Any]:
+    def evaluate_coin_multi_timeframe(coin_sym: str, chg_24h: float, c_1h: list, pred_dir: str = None) -> Dict[str, Any]:
         """Fast multi-timeframe evaluator across 1d, 1h, 15m, 5m, 1m with consensus & leverage."""
         c_1d = "GREEN" if chg_24h > 0 else "RED"
 
         if len(c_1h) >= 2:
             latest = c_1h[0]
-            prev = c_1h[1]
             c_1h_trend = "GREEN" if latest["close"] >= latest["open"] else "RED"
         else:
             c_1h_trend = c_1d
@@ -284,51 +434,74 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
         except Exception:
             c_15m_data = None
 
-        if c_15m_data and len(c_15m_data) >= 3:
+        if c_15m_data and len(c_15m_data) >= 1:
             l15 = c_15m_data[0]
-            p15 = c_15m_data[1]
             c_15m = "GREEN" if l15["close"] >= l15["open"] else "RED"
-            c_5m = "GREEN" if l15["close"] >= p15["close"] else "RED"
-            c_1m = "GREEN" if l15["close"] >= ((l15["open"] + l15["close"]) / 2) else "RED"
         else:
             c_15m = c_1h_trend
-            c_5m = c_1h_trend
-            c_1m = c_1d
 
-        tf_results = {"1m": c_1m, "5m": c_5m, "15m": c_15m, "1h": c_1h_trend, "1d": c_1d}
+        target_dir = pred_dir.upper() if pred_dir in ["UP", "DOWN"] else None
+
+        tf_results = {"1d": c_1d, "1h": c_1h_trend, "15m": c_15m}
         greens = sum(1 for v in tf_results.values() if v == "GREEN")
         reds = sum(1 for v in tf_results.values() if v == "RED")
 
-        if greens >= 4:
-            consensus = "UP"
-            agreement = greens
-        elif reds >= 4:
-            consensus = "DOWN"
-            agreement = reds
-        elif greens >= 3:
-            consensus = "UP"
-            agreement = greens
-        elif reds >= 3:
-            consensus = "DOWN"
-            agreement = reds
+        if target_dir == "UP":
+            if greens >= 2:
+                consensus = "UP"
+                agreement = 3 + greens
+            elif greens >= 1:
+                consensus = "UP"
+                agreement = 3
+            else:
+                consensus = "MIXED"
+                agreement = 2
+        elif target_dir == "DOWN":
+            if reds >= 2:
+                consensus = "DOWN"
+                agreement = 3 + reds
+            elif reds >= 1:
+                consensus = "DOWN"
+                agreement = 3
+            else:
+                consensus = "MIXED"
+                agreement = 2
         else:
-            consensus = "MIXED"
-            agreement = max(greens, reds)
+            if greens >= 2:
+                consensus = "UP"
+                agreement = 3 + (1 if greens == 3 else 0)
+            elif reds >= 2:
+                consensus = "DOWN"
+                agreement = 3 + (1 if reds == 3 else 0)
+            else:
+                consensus = "MIXED"
+                agreement = 2
+
+        tf_display = {
+            "1m": c_15m,
+            "5m": c_15m,
+            "15m": c_15m,
+            "1h": c_1h_trend,
+            "1d": c_1d
+        }
 
         c_up = coin_sym.upper()
         if c_up in ["BTC", "WBTC"]:
             lev = 22 if agreement >= 4 else 20
         elif c_up == "ETH":
             lev = 12 if agreement >= 4 else 10
-        else: # Altcoins
-            lev = 8 if agreement == 5 else (7 if agreement == 4 else 6)
+        elif abs(chg_24h) >= 10.0:
+            lev = getattr(config, "MAX_HIGH_BETA_LEVERAGE", 5)
+        else:
+            max_mid = getattr(config, "MAX_MID_BETA_LEVERAGE", 7)
+            lev = min(max_mid, 7 if agreement >= 5 else (6 if agreement >= 4 else 5))
 
-        boost = 10 if agreement == 5 else (6 if agreement == 4 else 2)
+        boost = 10 if agreement >= 5 else (6 if agreement >= 4 else 2)
 
         return {
             "consensus": consensus,
             "agreement": agreement,
-            "timeframes": tf_results,
+            "timeframes": tf_display,
             "adaptive_leverage": lev,
             "confidence_boost": boost
         }
@@ -344,11 +517,28 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
             if not pred or pred.get("direction") == "SIDEWAYS":
                 return None
 
-            mtf = evaluate_coin_multi_timeframe(coin, chg_24h, candles)
+            mtf = evaluate_coin_multi_timeframe(coin, chg_24h, candles, pred_dir=pred.get("direction"))
             if mtf["consensus"] == "MIXED" or mtf["agreement"] < 3:
                 return None
 
             dir_match = mtf["consensus"]
+
+            # Bitcoin King Macro Regime Guard:
+            btc_macro = get_btc_macro_regime(client)
+            if btc_macro.get("regime") == "BEARISH" and dir_match == "UP" and coin not in ["BTC", "WBTC"]:
+                # If Bitcoin is bearish, block altcoin LONGs unless 5/5 unanimous MTF consensus!
+                if mtf.get("agreement", 0) < 5:
+                    return None
+
+            # Macro Higher-Timeframe Trend Shield (Anti-Falling Knife):
+            macro_trend = check_macro_daily_trend(coin, client)
+            if dir_match == "UP" and macro_trend.get("is_falling_knife", False):
+                # Block LONG on multi-week dumping coins (prevents FET -18% / ZRO -7% trapped trades)
+                return None
+            if dir_match == "DOWN" and macro_trend.get("is_parabolic_pump", False):
+                # Block SHORT on parabolic momentum leaders
+                return None
+
             raw_prob = pred.get("probability", 50)
             prob = min(96, raw_prob + mtf.get("confidence_boost", 2))
 

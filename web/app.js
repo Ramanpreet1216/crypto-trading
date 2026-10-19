@@ -100,16 +100,14 @@ const elTradingViewContainer = document.getElementById("tradingview-container");
 const elCanvas = document.getElementById("tradingChart");
 
 
-// 1. Dynamic Decimal Price Formatter
+// 1. Dynamic Decimal Price Formatter (2 digits after decimal for crypto prices)
 function formatPrice(val) {
   if (val === null || val === undefined || isNaN(val)) return "$0.00";
   const num = Number(val);
   if (num === 0) return "$0.00";
   if (num < 0.001) return "$" + num.toFixed(6);
-  if (num < 0.1) return "$" + num.toFixed(5);
-  if (num < 10) return "$" + num.toFixed(4);
-  if (num < 1000) return "$" + num.toFixed(2);
-  return "$" + num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (num < 0.1) return "$" + num.toFixed(4);
+  return "$" + num.toFixed(2);
 }
 
 // 2. Format Candle Timestamp
@@ -895,18 +893,19 @@ function setTimeframe(tf) {
 
 // 15. Fetch Trending / High Volume / Top Dips for Ticker Bar
 async function fetchTopGainers() {
-  fetchTickerCategoryData("gainers");
+  fetchTickerCategoryData("majors");
 }
 
-async function fetchTickerCategoryData(cat = "gainers") {
+async function fetchTickerCategoryData(cat = "majors") {
   currentTickerCategory = cat;
   document.querySelectorAll(".cat-pill").forEach(p => {
     p.classList.toggle("active", p.id === `cat-${cat}`);
   });
 
   try {
-    let url = "/api/all_coins?limit=12";
-    if (cat === "gainers") url += "&sort=gainers";
+    let url = "/api/all_coins?limit=15";
+    if (cat === "majors") url += "&sort=majors";
+    else if (cat === "gainers") url += "&sort=gainers";
     else if (cat === "losers") url += "&sort=losers";
     else url += "&sort=volume";
 
@@ -918,7 +917,7 @@ async function fetchTickerCategoryData(cat = "gainers") {
     if (coins.length > 0) {
       const container = document.getElementById("ticker-chips-container");
       container.innerHTML = "";
-      coins.slice(0, 10).forEach(c => {
+      coins.forEach(c => {
         const coinName = c.coin;
         const change = parseFloat(c.change_24h || 0);
         const btn = document.createElement("button");
@@ -1011,7 +1010,7 @@ async function syncBotStatus() {
     }
     const elTradeChunk = document.getElementById("card-trade-chunk");
     if (elTradeChunk) {
-      const slotSize = isLive ? Math.round(futuresBal / 10) : Math.round(paperBal / 10);
+      const slotSize = isLive ? Math.round(futuresBal / 5) : 6000;
       elTradeChunk.textContent = `₹${slotSize.toLocaleString("en-IN")} / slot`;
     }
 
@@ -1038,6 +1037,25 @@ async function syncBotStatus() {
       elBotToggleBtn.classList.remove("running");
       elBotToggleText.textContent = "START BOT";
       elBotToggleIcon.textContent = "▶";
+    }
+
+    // Sync Pause New Trades (Manage-Only Mode) Button
+    const btnNewTrades = document.getElementById("btn-toggle-new-trades");
+    const newTradesIcon = document.getElementById("new-trades-icon");
+    const newTradesText = document.getElementById("new-trades-text");
+    const allowNewTrades = data.allow_new_trades !== false;
+    if (btnNewTrades && newTradesIcon && newTradesText) {
+      if (allowNewTrades) {
+        btnNewTrades.classList.remove("paused");
+        newTradesIcon.textContent = "⏸️";
+        newTradesText.textContent = "PAUSE NEW TRADES";
+        btnNewTrades.title = "Click to stop opening new trades while continuing to actively manage current open positions.";
+      } else {
+        btnNewTrades.classList.add("paused");
+        newTradesIcon.textContent = "▶️";
+        newTradesText.textContent = "RESUME NEW TRADES";
+        btnNewTrades.title = "Manage-Only Mode is ACTIVE. Bot is actively managing open trades, but will NOT open new ones. Click to resume new trades.";
+      }
     }
 
     // Dynamic 24/7 Market Regime HUD
@@ -1082,13 +1100,25 @@ async function syncBotStatus() {
       ? data.active_positions
       : (data.active_position ? [data.active_position] : []);
 
-    const maxSlots = data.max_slots || 10;
+    const maxSlots = data.max_slots || 5;
     if (positions.length > 0) {
-      elPosBadge.textContent = `ACTIVE (${positions.length}/${maxSlots} SLOTS)`;
-      elPosBadge.style.color = "#38bdf8";
+      const totalActivePnlInr = positions.reduce((sum, p) => sum + (Number(p.invested || 200) * ((p.gross_pnl_pct || 0) / 100.0)), 0);
+      const totalSign = totalActivePnlInr >= 0 ? "+₹" : "-₹";
+      const totalPnlStr = `${totalSign}${Math.abs(totalActivePnlInr).toFixed(2)}`;
+      const totalColor = totalActivePnlInr >= 0 ? "#10b981" : "#ef4444";
+
+      if (!allowNewTrades) {
+        elPosBadge.innerHTML = `MANAGE-ONLY (${positions.length}/${maxSlots} SLOTS) • Live PnL: <b style="color:${totalColor}">${totalPnlStr}</b>`;
+        elPosBadge.style.color = "#f59e0b";
+      } else {
+        elPosBadge.innerHTML = `ACTIVE (${positions.length}/${maxSlots} SLOTS) • Live PnL: <b style="color:${totalColor}">${totalPnlStr}</b>`;
+        elPosBadge.style.color = "#38bdf8";
+      }
 
       let posHtml = '<div class="active-positions-list">';
+      window._ACTIVE_POSITIONS_MAP = {};
       positions.forEach(pos => {
+        window._ACTIVE_POSITIONS_MAP[pos.symbol] = Object.assign({}, pos);
         const isShort = (pos.direction || pos.side) === "SHORT";
         const isRunner = Boolean(pos.is_runner);
         const lev = pos.leverage || 4;
@@ -1114,17 +1144,24 @@ async function syncBotStatus() {
         const trailLockPct = Number(pos.trailing_lock_pct || 0);
         const hasProfitLock = trailLockPct > 0 || (pos.trailing_stop && (isShort ? Number(pos.trailing_stop) < entry : Number(pos.trailing_stop) > entry));
 
-        // Defense level (-65% Margin Drawdown or Trailing Profit Lock)
-        let slDefense = Number(pos.sl_defense_price || 0);
+        // Disciplined Stop-Loss Level (-8.0% Margin Drawdown or Trailing Profit Lock)
+        const slRoiPct = Number(pos.sl_roi_pct || 8.0);
+        let slDefense = Number(pos.stop_loss || pos.sl_defense_price || 0);
         if (!slDefense || slDefense <= 0) {
           if (pos.trailing_stop) {
             slDefense = Number(pos.trailing_stop);
-          } else if (pos.stop_loss) {
-            slDefense = Number(pos.stop_loss);
           } else {
-            slDefense = isShort ? (entry * (1.0 + (0.65 / lev))) : (entry * (1.0 - (0.65 / lev)));
+            slDefense = isShort ? (entry * (1.0 + ((slRoiPct / 100.0) / lev))) : (entry * (1.0 - ((slRoiPct / 100.0) / lev)));
           }
         }
+
+        // Target PnL %
+        let targetPnlPct = Number(pos.tp_target_pct || 0);
+        if (!targetPnlPct && entry > 0 && targetVal > 0) {
+          const rawTargetMove = isShort ? ((entry - targetVal) / entry) * 100 : ((targetVal - entry) / entry) * 100;
+          targetPnlPct = Math.max(5, rawTargetMove * lev);
+        }
+        if (!targetPnlPct || targetPnlPct <= 0) targetPnlPct = 14.0;
 
         // Lock notch position on track (if profit locked)
         let lockNotchHtml = '';
@@ -1134,21 +1171,13 @@ async function syncBotStatus() {
           lockNotchHtml = `<div class="pos-gauge-trail-lock" style="left: ${lockNeedlePct.toFixed(1)}%;" title="🔒 Trailing Profit Lock (+${trailLockPct}%): ${formatPrice(slDefense)}"></div>`;
         }
 
-        // Target PnL %
-        let targetPnlPct = Number(pos.tp_target_pct || 0);
-        if (!targetPnlPct && entry > 0 && targetVal > 0) {
-          const rawTargetMove = isShort ? ((entry - targetVal) / entry) * 100 : ((targetVal - entry) / entry) * 100;
-          targetPnlPct = Math.max(5, rawTargetMove * lev);
-        }
-        if (!targetPnlPct || targetPnlPct <= 0) targetPnlPct = 15.0;
-
-        // Needle percentage: 0% = -65% SL defense, 50% = Entry (0%), 100% = Target TP
+        // Needle percentage: 0% = -8.0% SL cut (-₹28), 50% = Entry (0%), 100% = Target TP
         let needlePct = 50.0;
         if (grossPnlPct >= 0) {
           const ratio = Math.min(1.0, grossPnlPct / targetPnlPct);
           needlePct = 50.0 + (ratio * 50.0);
         } else {
-          const ratio = Math.min(1.0, Math.abs(grossPnlPct) / 65.0);
+          const ratio = Math.min(1.0, Math.abs(grossPnlPct) / slRoiPct);
           needlePct = 50.0 - (ratio * 50.0);
         }
         needlePct = Math.max(3, Math.min(97, Math.round(needlePct * 10) / 10));
@@ -1166,13 +1195,22 @@ async function syncBotStatus() {
           fillStyle = `left: ${needlePct.toFixed(1)}%; width: ${(50 - needlePct).toFixed(1)}%;`;
         }
 
+        const investedNum = Number(pos.invested || 200.0);
+        const curActivePnlInr = investedNum * (grossPnlPct / 100.0);
+        const pnlInrSign = curActivePnlInr >= 0 ? "+₹" : "-₹";
+        const pnlInrFormatted = `${pnlInrSign}${Math.abs(curActivePnlInr).toFixed(2)}`;
+
+        // Expected INR amounts at Target TP and at Disciplined SL Cut
+        const tpGainInr = investedNum * (targetPnlPct / 100.0);
+        const slLossInr = Number(pos.max_loss_inr || (investedNum * (slRoiPct / 100.0)));
+
         posHtml += `
-          <div class="active-pos-card ${isShort ? 'short-pos' : 'long-pos'}">
+          <div class="active-pos-card ${isShort ? 'short-pos' : 'long-pos'}" id="pos-card-${pos.symbol}">
             <div class="pos-card-head">
               <span class="pos-dir-pill ${isShort ? 'short' : 'long'}">${isShort ? 'SHORT' : 'LONG'}</span>
               <span class="pos-coin-name">${pos.symbol}</span>
               <span class="pos-lev-badge">${lev}x</span>
-              <span class="pos-live-pnl-tag ${pnlColorClass}">${pnlSign}${grossPnlPct.toFixed(2)}%</span>
+              <span class="pos-live-pnl-tag ${pnlColorClass}" id="pos-live-pnl-${pos.symbol}">${pnlInrFormatted} (${pnlSign}${grossPnlPct.toFixed(2)}%)</span>
               ${hasProfitLock ? `<span class="badge-profit-lock">🔒 +${trailLockPct || 7}% LOCKED</span>` : ''}
               ${runnerTag}
               <button type="button" class="btn-close-single-pos" onclick="closePositionByCoin('${pos.symbol}')" title="Close ${pos.symbol}">✕ Close</button>
@@ -1180,12 +1218,12 @@ async function syncBotStatus() {
             <div class="pos-card-metrics">
               <div class="pos-m-row">
                 <span>Entry:</span> <b>${formatPrice(pos.buy_price)}</b> •
-                <span>Live:</span> <b class="${pnlColorClass}">${formatPrice(current)}</b> •
+                <span>Live:</span> <b class="${pnlColorClass}" id="pos-live-val-${pos.symbol}">${formatPrice(current)}</b> •
                 <span>Margin:</span> <b>₹${invested}</b> (${qty} ${pos.symbol})
               </div>
               <div class="pos-m-row">
-                <span>Target:</span> <b class="pos-tp-txt">${target} (+${targetPnlPct.toFixed(0)}%)</b> • 
-                <span>${hasProfitLock ? 'Profit Lock:' : 'SL Defense:'}</span> <b class="${hasProfitLock ? 'pos-lock-txt' : 'pos-sl-txt'}">${hasProfitLock ? '🔒 +' + (trailLockPct || 7) + '% (' + formatPrice(slDefense) + ')' : formatPrice(slDefense) + ' (-65%)'}</b>
+                <span>Target:</span> <b class="pos-tp-txt">${target} (+${targetPnlPct.toFixed(0)}% / +₹${tpGainInr.toFixed(2)})</b> • 
+                <span>${hasProfitLock ? 'Profit Lock:' : 'Hard SL Cut:'}</span> <b class="${hasProfitLock ? 'pos-lock-txt' : 'pos-sl-txt'}">${hasProfitLock ? '🔒 +' + (trailLockPct || 7) + '% (' + formatPrice(slDefense) + ')' : formatPrice(slDefense) + ' (-' + slRoiPct.toFixed(0) + '% / -₹' + slLossInr.toFixed(2) + ')'}</b>
               </div>
             </div>
 
@@ -1196,12 +1234,12 @@ async function syncBotStatus() {
                 <div class="pos-gauge-center-line" title="Entry Point: ${formatPrice(entry)} (0%)"></div>
                 ${lockNotchHtml}
                 <!-- Dynamic Active Fill from Center -->
-                <div class="pos-gauge-fill ${isProfit ? 'fill-profit' : 'fill-loss'}" style="${fillStyle}"></div>
+                <div class="pos-gauge-fill ${isProfit ? 'fill-profit' : 'fill-loss'}" id="pos-fill-${pos.symbol}" style="${fillStyle}"></div>
                 <!-- Live Real-Time Moving Pin -->
-                <div class="pos-gauge-needle ${isProfit ? 'needle-profit' : 'needle-loss'}" style="left: ${needlePct}%;">
+                <div class="pos-gauge-needle ${isProfit ? 'needle-profit' : 'needle-loss'}" id="pos-needle-${pos.symbol}" style="left: ${needlePct}%;">
                   <div class="pos-gauge-pin"></div>
-                  <div class="pos-gauge-pin-badge ${pnlColorClass}">
-                    ${pinIcon} ${pnlFormatted}
+                  <div class="pos-gauge-pin-badge ${pnlColorClass}" id="pos-pin-${pos.symbol}">
+                    ${pinIcon} ${pnlInrFormatted} (${pnlFormatted})
                   </div>
                 </div>
               </div>
@@ -1209,7 +1247,7 @@ async function syncBotStatus() {
               <!-- Legend / Labels Below Bar -->
               <div class="pos-gauge-labels">
                 <div class="pos-gl-item ${hasProfitLock ? 'pos-gl-lock' : 'pos-gl-sl'}">
-                  <span class="pos-gl-title">${hasProfitLock ? `🔒 +${trailLockPct || 7}% Lock` : '🛡️ -65% Def'}</span>
+                  <span class="pos-gl-title">${hasProfitLock ? `🔒 +${trailLockPct || 7}% Lock` : '🛡️ SL Cut (-₹' + slLossInr.toFixed(0) + ')'}</span>
                   <span class="pos-gl-val">${formatPrice(slDefense)}</span>
                 </div>
                 <div class="pos-gl-item pos-gl-entry">
@@ -1217,7 +1255,7 @@ async function syncBotStatus() {
                   <span class="pos-gl-val">${formatPrice(entry)}</span>
                 </div>
                 <div class="pos-gl-item pos-gl-tp">
-                  <span class="pos-gl-title">🎯 TP +${targetPnlPct.toFixed(0)}%</span>
+                  <span class="pos-gl-title">🎯 TP +${targetPnlPct.toFixed(0)}% (+₹${tpGainInr.toFixed(0)})</span>
                   <span class="pos-gl-val">${target}</span>
                 </div>
               </div>
@@ -1227,10 +1265,16 @@ async function syncBotStatus() {
       });
       posHtml += '</div>';
       elPosDetails.innerHTML = posHtml;
+      syncWebSocketSubscriptions(positions);
     } else {
-      elPosBadge.textContent = `NO ACTIVE TRADES (0/${maxSlots} SLOTS)`;
-      elPosBadge.style.color = "#94a3b8";
-      elPosDetails.textContent = `Model Status: [${data.last_signal || 'AUTONOMOUS 24/7'}] - ${data.last_reason || 'Scanning 700+ coins across 10 slots'}`;
+      if (!allowNewTrades) {
+        elPosBadge.textContent = `MANAGE-ONLY (0/${maxSlots} SLOTS - STANDBY)`;
+        elPosBadge.style.color = "#f59e0b";
+      } else {
+        elPosBadge.textContent = `NO ACTIVE TRADES (0/${maxSlots} SLOTS)`;
+        elPosBadge.style.color = "#94a3b8";
+      }
+      elPosDetails.textContent = `Model Status: [${data.last_signal || 'AUTONOMOUS 24/7'}] - ${data.last_reason || 'Scanning 700+ coins across 5 slots'}`;
     }
 
     if (data.performance_summary) {
@@ -1319,7 +1363,7 @@ function updateTradePerformanceHUD(summary) {
     if (elNetPnl) {
       elNetPnl.textContent = "INR +0.00";
       elNetPnl.style.color = "#10b981";
-      elNetPnl.title = "Simulated Capital: ₹30,000.00 • Preserving 100% Cash until Diamond setup triggers";
+      elNetPnl.title = "Futures Capital: ₹30,000.00 • Strict 5-Timeframe Live Confluence";
       const cell = elNetPnl.closest(".trade-hud-cell");
       if (cell) cell.style.borderLeftColor = "#10b981";
     }
@@ -1331,8 +1375,8 @@ function updateTradePerformanceHUD(summary) {
       elWinLoss.textContent = "0W / 0L";
     }
     if (elTotalTrades) {
-      elTotalTrades.textContent = "0 / 10 Slots";
-      elTotalTrades.title = "Dynamic 10-slot manager active. Standing by for Diamond coins.";
+      elTotalTrades.textContent = "0 / 5 Slots";
+      elTotalTrades.title = "Dynamic 5-slot manager active (₹200-₹250 sizing).";
     }
     return;
   }
@@ -1376,23 +1420,139 @@ function filterTradeDirection(dir) {
   renderTradeLogList();
 }
 
+// ==============================================================================
+// IST (Indian Standard Time) Date Formatting & Filtering Controls
+// ==============================================================================
+let activeDateFilter = "ALL"; // 'ALL', 'TODAY', 'YESTERDAY', 'CUSTOM'
+let dateFilterFrom = "";
+let dateFilterTo = "";
+
+function getISTDateString(d = new Date()) {
+  // IST is UTC + 5:30
+  const utc = d.getTime() + (d.getTimezoneOffset() * 60000);
+  const ist = new Date(utc + (3600000 * 5.5));
+  const year = ist.getFullYear();
+  const month = String(ist.getMonth() + 1).padStart(2, "0");
+  const day = String(ist.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getTradeDateString(t) {
+  const raw = t.timestamp || t.time || "";
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+  if (t.entry_time) {
+    return getISTDateString(new Date(Number(t.entry_time) * 1000));
+  }
+  return "";
+}
+
+function filterTradeDatePreset(preset) {
+  activeDateFilter = preset;
+  const fromInput = document.getElementById("trade-date-from");
+  const toInput = document.getElementById("trade-date-to");
+
+  const todayStr = getISTDateString(new Date());
+  const yest = new Date();
+  yest.setDate(yest.getDate() - 1);
+  const yestStr = getISTDateString(yest);
+
+  if (preset === "ALL") {
+    dateFilterFrom = "";
+    dateFilterTo = "";
+    if (fromInput) fromInput.value = "";
+    if (toInput) toInput.value = "";
+  } else if (preset === "TODAY") {
+    dateFilterFrom = todayStr;
+    dateFilterTo = todayStr;
+    if (fromInput) fromInput.value = todayStr;
+    if (toInput) toInput.value = todayStr;
+  } else if (preset === "YESTERDAY") {
+    dateFilterFrom = yestStr;
+    dateFilterTo = yestStr;
+    if (fromInput) fromInput.value = yestStr;
+    if (toInput) toInput.value = yestStr;
+  }
+
+  ["all", "today", "yesterday"].forEach(p => {
+    const btn = document.getElementById(`date-btn-${p}`);
+    if (btn) btn.classList.toggle("active", p.toUpperCase() === preset);
+  });
+
+  renderTradeLogList();
+}
+
+function onTradeDateRangeChanged() {
+  const fromInput = document.getElementById("trade-date-from");
+  const toInput = document.getElementById("trade-date-to");
+  dateFilterFrom = fromInput ? fromInput.value : "";
+  dateFilterTo = toInput ? toInput.value : "";
+
+  activeDateFilter = (dateFilterFrom || dateFilterTo) ? "CUSTOM" : "ALL";
+
+  ["all", "today", "yesterday"].forEach(p => {
+    const btn = document.getElementById(`date-btn-${p}`);
+    if (btn) btn.classList.remove("active");
+  });
+  if (activeDateFilter === "ALL") {
+    const btnAll = document.getElementById("date-btn-all");
+    if (btnAll) btnAll.classList.add("active");
+  }
+
+  renderTradeLogList();
+}
+
+function resetTradeDateFilter() {
+  filterTradeDatePreset("ALL");
+}
+
+function updateDynamicTradeHUD(trades) {
+  const completed = trades.filter(t => t.type === "SELL" || t.type === "BUY_COVER" || (t.pnl !== undefined && t.pnl !== null));
+  const wins = completed.filter(t => (t.gross_pnl !== undefined && Number(t.gross_pnl) > 0) || Number(t.pnl || t.pnl_inr || 0) >= 0);
+  const losses = completed.filter(t => (t.gross_pnl !== undefined ? Number(t.gross_pnl) < 0 : false) && Number(t.pnl || t.pnl_inr || 0) < 0);
+  const netPnl = completed.reduce((acc, t) => acc + Number(t.pnl || t.pnl_inr || 0), 0);
+  const winRate = completed.length > 0 ? (wins.length / completed.length) * 100 : 0;
+
+  const elNetPnl = document.getElementById("hud-net-pnl");
+  const elWinRate = document.getElementById("hud-win-rate");
+  const elWinLoss = document.getElementById("hud-win-loss");
+  const elTotalTrades = document.getElementById("hud-total-trades");
+
+  if (elNetPnl) {
+    elNetPnl.textContent = `INR ${netPnl >= 0 ? '+' : ''}${netPnl.toFixed(2)}`;
+    elNetPnl.style.color = netPnl >= 0 ? "#10b981" : "#ef4444";
+    const cell = elNetPnl.closest(".trade-hud-cell");
+    if (cell) cell.style.borderLeftColor = netPnl >= 0 ? "#10b981" : "#ef4444";
+  }
+  if (elWinRate) {
+    elWinRate.textContent = completed.length > 0 ? `${winRate.toFixed(1)}%` : "100% Target";
+    elWinRate.style.color = winRate >= 50 ? "#34d399" : (completed.length > 0 ? "#f59e0b" : "#38bdf8");
+  }
+  if (elWinLoss) {
+    elWinLoss.textContent = `${wins.length}W / ${losses.length}L`;
+  }
+  if (elTotalTrades) {
+    elTotalTrades.textContent = `${trades.length} trades`;
+  }
+}
+
 function formatTradeDateTime(t) {
   const ts = t.timestamp || "";
   const tm = t.time || "";
 
-  // 1. If timestamp has date and clock (e.g. "2026-10-09 21:35:12" or "2026-10-09T21:35:12")
+  // 1. If timestamp has date and clock (e.g. "2026-10-17 03:45:12" or "2026-10-17T03:45:12")
   const raw = ts || tm;
   const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}:\d{2}(?::\d{2})?)/);
   if (match) {
     const [_, year, month, day, clock] = match;
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const mStr = monthNames[parseInt(month, 10) - 1] || month;
-    return `<span class="time-date">${day} ${mStr} ${year}</span> <span class="time-clock">${clock}</span>`;
+    return `<span class="time-date">${day} ${mStr} ${year}</span> <span class="time-clock">${clock}</span> <span style="font-size:0.58rem; color:#c084fc; font-weight:700; margin-left:2px;">IST</span>`;
   }
 
   // 2. If timestamp or time has just time "17:19:31"
   if (tm) {
-    return `<span class="time-clock">${tm}</span>`;
+    return `<span class="time-clock">${tm}</span> <span style="font-size:0.58rem; color:#c084fc; font-weight:700; margin-left:2px;">IST</span>`;
   }
   return raw;
 }
@@ -1412,12 +1572,14 @@ function renderTradeLogList() {
   if (activeTradeFilter === "WINS") {
     filtered = filtered.filter(t => {
       const isExit = t.type === "SELL" || t.type === "BUY_COVER" || (t.pnl !== undefined && t.pnl !== null);
-      return isExit && Number(t.pnl || t.pnl_inr || 0) > 0;
+      const isGrossWin = t.gross_pnl !== undefined && Number(t.gross_pnl) > 0;
+      return isExit && (Number(t.pnl || t.pnl_inr || 0) >= 0 || isGrossWin);
     });
   } else if (activeTradeFilter === "LOSSES") {
     filtered = filtered.filter(t => {
       const isExit = t.type === "SELL" || t.type === "BUY_COVER" || (t.pnl !== undefined && t.pnl !== null);
-      return isExit && Number(t.pnl || t.pnl_inr || 0) < 0;
+      const isGrossWin = t.gross_pnl !== undefined && Number(t.gross_pnl) > 0;
+      return isExit && Number(t.pnl || t.pnl_inr || 0) < 0 && !isGrossWin;
     });
   }
 
@@ -1429,11 +1591,32 @@ function renderTradeLogList() {
     });
   }
 
+  // 3. Filter by Date Range (IST)
+  if (activeDateFilter !== "ALL" || dateFilterFrom || dateFilterTo) {
+    filtered = filtered.filter(t => {
+      const tradeDate = getTradeDateString(t);
+      if (!tradeDate) return true;
+      if (dateFilterFrom && tradeDate < dateFilterFrom) return false;
+      if (dateFilterTo && tradeDate > dateFilterTo) return false;
+      return true;
+    });
+  }
+
+  // Recalculate HUD stats if filtered by date or tags
+  if (activeDateFilter !== "ALL" || activeTradeFilter !== "ALL" || activeDirectionFilter !== "ALL") {
+    updateDynamicTradeHUD(filtered);
+  }
+
   if (!filtered || filtered.length === 0) {
+    let dateFilterNote = "";
+    if (activeDateFilter === "TODAY") dateFilterNote = " for Today (IST)";
+    else if (activeDateFilter === "YESTERDAY") dateFilterNote = " for Yesterday";
+    else if (dateFilterFrom || dateFilterTo) dateFilterNote = ` in selected date range (${dateFilterFrom || 'start'} to ${dateFilterTo || 'now'})`;
+
     if (currentHistorySource === "PAPER") {
-      elTradeLogList.innerHTML = `<div class="empty-trades" id="empty-trades-banner">🎯 Diamond Sniper Armed & Standing By (₹30,000 Capital). 0/10 Slots Active. Strict 5-Timeframe Diamond Filter Active. 0 Trades Triggered Yet.</div>`;
+      elTradeLogList.innerHTML = `<div class="empty-trades" id="empty-trades-banner">🎯 Autonomous Live Engine Armed & Standing By (₹30,000.00 Capital). 0/5 Slots Active. No executions${dateFilterNote} yet.</div>`;
     } else {
-      elTradeLogList.innerHTML = `<div class="empty-trades">No ${activeTradeFilter !== 'ALL' ? activeTradeFilter.toLowerCase() : ''} ${activeDirectionFilter !== 'ALL' ? activeDirectionFilter.toLowerCase() + ' ' : ''}executions recorded yet.</div>`;
+      elTradeLogList.innerHTML = `<div class="empty-trades">No ${activeTradeFilter !== 'ALL' ? activeTradeFilter.toLowerCase() : ''} ${activeDirectionFilter !== 'ALL' ? activeDirectionFilter.toLowerCase() + ' ' : ''}executions${dateFilterNote} recorded yet.</div>`;
     }
     return;
   }
@@ -1443,13 +1626,15 @@ function renderTradeLogList() {
     const dir = (t.direction || (t.type === "SELL_SHORT" || t.type === "BUY_COVER" ? "SHORT" : "LONG")).toUpperCase();
     const isShort = dir === "SHORT";
     const lev = t.leverage ? `${t.leverage}x` : (t.note && t.note.includes("x") ? t.note.match(/(\d+)x/)?.[0] : "4x");
+    const grossVal = t.gross_pnl !== undefined && t.gross_pnl !== null ? Number(t.gross_pnl) : null;
     const pnlVal = t.pnl !== undefined ? Number(t.pnl) : (t.pnl_inr !== undefined ? Number(t.pnl_inr) : null);
     const pnlPct = t.pnl_pct !== undefined ? Number(t.pnl_pct) : null;
-    const isWin = pnlVal !== null && pnlVal > 0;
-    const isLoss = pnlVal !== null && pnlVal < 0;
+    const isGrossWin = grossVal !== null && grossVal > 0;
+    const isWin = isGrossWin || (pnlVal !== null && pnlVal >= 0);
+    const isLoss = (grossVal !== null ? grossVal < 0 : false) && (pnlVal !== null && pnlVal < 0);
 
     let pnlColor = "#94a3b8";
-    if (isWin) pnlColor = "#10b981";
+    if (isWin) pnlColor = (pnlVal !== null && pnlVal > 0) ? "#10b981" : "#38bdf8";
     if (isLoss) pnlColor = "#ef4444";
 
     const badgeClass = isShort ? "badge-short" : "badge-long";
@@ -1646,6 +1831,25 @@ async function toggleBot() {
   }
 }
 
+// 18b. Toggle Manage-Only Mode (Pause New Trades)
+async function toggleNewTrades() {
+  try {
+    const res = await fetch("/api/bot/toggle_new_trades", { method: "POST" });
+    const data = await res.json();
+    if (data.status === "success") {
+      const isPaused = !data.allow_new_trades;
+      showNotification(
+        isPaused
+          ? "🛡️ Manage-Only Mode Activated: Bot will NOT open any new trades, but will continue managing and exiting current positions!"
+          : "🚀 Auto-Trading Resumed: Bot will now open new trades when open slots are available."
+      );
+      syncBotStatus();
+    }
+  } catch (e) {
+    console.error("Error toggling new trades:", e);
+  }
+}
+
 
 // ==============================================================================
 // 19. INTERACTIVE CUSTOM FUTURES ORDER TERMINAL & SIZING
@@ -1740,7 +1944,7 @@ function updateCustomOrderSummary() {
   const lossDisp = document.getElementById("term-preview-loss");
   if (lossDisp) {
     if (sl <= 0.05) {
-      lossDisp.textContent = `🛡️ Protected by Margin Defense (-65% Top-Up)`;
+      lossDisp.textContent = `🛡️ Protected by Margin Defense (-48% Top-Up)`;
       lossDisp.style.color = "#a855f7";
     } else {
       const lossInr = margin * ((sl * lev) / 100.0);
@@ -2117,7 +2321,7 @@ function updateRiskProfileUI(currentMode, profile) {
 
   if (desc) {
     if (currentMode === "USER_MIRROR") {
-      desc.textContent = "🎯 User Mirror Sniper (6x-22x Safe Lev, ₹200-₹500 TP, -65% Margin Defense, 30m Anti-Whipsaw Cooldown).";
+      desc.textContent = "🎯 User Mirror Sniper (6x-22x Safe Lev, ₹200-₹250 Sizing, -48% Margin Defense, 30m Anti-Whipsaw Cooldown).";
     } else if (profile) {
       desc.textContent = `${profile.description} Leverage: ${profile.leverage}x • Margin: ₹${profile.investment_inr} • Min Conf: ${profile.min_confidence}% • Target: +${profile.take_profit_pct}%`;
     }
@@ -3004,6 +3208,159 @@ async function clearAllAlerts() {
   } catch (e) {
     console.error("Clear alerts error:", e);
   }
+}
+
+// ==============================================================================
+// REAL-TIME COINDCX WEBSOCKET STREAM (BROWSER DIRECT 0ms PUSH)
+// ==============================================================================
+let wsClient = null;
+const subscribedWsChannels = new Set();
+
+function initCoinDcxWebSocket() {
+  if (typeof io === "undefined") {
+    console.log("[WS Notice] Socket.IO library not loaded, using fast REST polling fallback.");
+    return;
+  }
+  try {
+    wsClient = io("https://stream.coindcx.com", {
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+    });
+
+    wsClient.on("connect", () => {
+      console.log("⚡ [CoinDCX WebSocket] Connected to Real-Time Stream!");
+      const wsPill = document.getElementById("ws-status-label");
+      if (wsPill) wsPill.textContent = "⚡ WS STREAM: LIVE (0ms)";
+      subscribedWsChannels.clear();
+      if (window._ACTIVE_POSITIONS_MAP) {
+        syncWebSocketSubscriptions(Object.values(window._ACTIVE_POSITIONS_MAP));
+      }
+    });
+
+    wsClient.on("disconnect", () => {
+      console.log("[CoinDCX WebSocket] Disconnected, auto-reconnecting...");
+      subscribedWsChannels.clear();
+    });
+
+    wsClient.on("new-trade", (msg) => {
+      try {
+        const raw = msg ? msg.data : null;
+        if (!raw) return;
+        const data = typeof raw === "string" ? JSON.parse(raw) : raw;
+        const sym = data.s || "";
+        const price = parseFloat(data.p || 0);
+        const coin = sym.replace("B-", "").replace("_USDT", "");
+        if (coin && price > 0) {
+          handleWebSocketLiveTick(coin, price);
+        }
+      } catch (e) {}
+    });
+  } catch (err) {
+    console.warn("WebSocket init error:", err);
+  }
+}
+
+function syncWebSocketSubscriptions(positions) {
+  if (!wsClient || !wsClient.connected || !positions || !positions.length) return;
+  positions.forEach(p => {
+    const coin = p.symbol;
+    if (!coin) return;
+    const channel = `B-${coin}_USDT@trades`;
+    if (!subscribedWsChannels.has(channel)) {
+      try {
+        wsClient.emit("join", { channelName: channel });
+        subscribedWsChannels.add(channel);
+        console.log(`⚡ [WS Subscribed]: ${channel}`);
+      } catch (err) {}
+    }
+  });
+}
+
+function handleWebSocketLiveTick(coin, newPrice) {
+  if (!window._ACTIVE_POSITIONS_MAP || !window._ACTIVE_POSITIONS_MAP[coin]) return;
+  const pos = window._ACTIVE_POSITIONS_MAP[coin];
+  const entry = Number(pos.buy_price || pos.price || 0);
+  if (!entry || entry <= 0) return;
+  const lev = Number(pos.leverage || 7);
+  const isShort = (pos.direction || pos.side) === "SHORT";
+
+  // Calculate new live gross PnL %
+  const rawMove = isShort ? ((entry - newPrice) / entry) * 100 : ((newPrice - entry) / entry) * 100;
+  const grossPnlPct = rawMove * lev;
+  const isProfit = grossPnlPct >= 0;
+  const pnlSign = grossPnlPct > 0 ? "+" : "";
+  const pnlFormatted = `${pnlSign}${grossPnlPct.toFixed(1)}%`;
+  const pnlColorClass = isProfit ? "pos-pnl-green" : "pos-pnl-red";
+  const pinIcon = isProfit ? "▲" : "▼";
+
+  // Calculate live Active PnL in INR
+  const investedNum = Number(pos.invested || 200.0);
+  const curActivePnlInr = investedNum * (grossPnlPct / 100.0);
+  const pnlInrSign = curActivePnlInr >= 0 ? "+₹" : "-₹";
+  const pnlInrFormatted = `${pnlInrSign}${Math.abs(curActivePnlInr).toFixed(2)}`;
+
+  // Update live price text
+  const elLiveVal = document.getElementById(`pos-live-val-${coin}`);
+  if (elLiveVal) {
+    elLiveVal.textContent = formatPrice(newPrice);
+    elLiveVal.className = pnlColorClass;
+  }
+
+  // Update live PnL tag with both INR and %
+  const elPnlTag = document.getElementById(`pos-live-pnl-${coin}`);
+  if (elPnlTag) {
+    elPnlTag.textContent = `${pnlInrFormatted} (${pnlSign}${grossPnlPct.toFixed(2)}%)`;
+    elPnlTag.className = `pos-live-pnl-tag ${pnlColorClass}`;
+  }
+
+  // Calculate new needle percentage (0% = -8.0% SL cut, 50% = Entry, 100% = Target TP)
+  let targetPnlPct = Number(pos.tp_target_pct || 14.0);
+  let needlePct = 50.0;
+  if (grossPnlPct >= 0) {
+    const ratio = Math.min(1.0, grossPnlPct / targetPnlPct);
+    needlePct = 50.0 + (ratio * 50.0);
+  } else {
+    const slRoi = Number(pos.sl_roi_pct || 8.0);
+    const ratio = Math.min(1.0, Math.abs(grossPnlPct) / slRoi);
+    needlePct = 50.0 - (ratio * 50.0);
+  }
+  needlePct = Math.max(3, Math.min(97, Math.round(needlePct * 10) / 10));
+
+  // Update Needle
+  const elNeedle = document.getElementById(`pos-needle-${coin}`);
+  if (elNeedle) {
+    elNeedle.style.left = `${needlePct}%`;
+    elNeedle.className = `pos-gauge-needle ${isProfit ? 'needle-profit' : 'needle-loss'}`;
+  }
+
+  // Update Pin Badge with INR and %
+  const elPin = document.getElementById(`pos-pin-${coin}`);
+  if (elPin) {
+    elPin.innerHTML = `${pinIcon} ${pnlInrFormatted} (${pnlFormatted})`;
+    elPin.className = `pos-gauge-pin-badge ${pnlColorClass}`;
+  }
+
+  // Update Gauge Fill
+  const elFill = document.getElementById(`pos-fill-${coin}`);
+  if (elFill) {
+    if (needlePct >= 50) {
+      elFill.style.left = "50%";
+      elFill.style.width = `${(needlePct - 50).toFixed(1)}%`;
+    } else {
+      elFill.style.left = `${needlePct.toFixed(1)}%`;
+      elFill.style.width = `${(50 - needlePct).toFixed(1)}%`;
+    }
+    elFill.className = `pos-gauge-fill ${isProfit ? 'fill-profit' : 'fill-loss'}`;
+  }
+}
+
+// Auto-initialize CoinDCX WebSocket stream on load
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initCoinDcxWebSocket);
+} else {
+  setTimeout(initCoinDcxWebSocket, 500);
 }
 
 

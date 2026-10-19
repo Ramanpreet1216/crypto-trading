@@ -63,14 +63,19 @@
           <span class="alert-badge-counter" id="alert-counter" style="display: none;">0</span>
         </button>
 
-        <div class="status-pill">
-          <span class="live-dot"></span>
-          <span class="status-label">FEED: 739+ PAIRS LIVE</span>
+        <div class="status-pill" id="ws-status-pill" title="CoinDCX Official WebSocket: 0ms real-time trade stream active">
+          <span class="live-dot" id="ws-live-dot"></span>
+          <span class="status-label" id="ws-status-label">⚡ WS STREAM: LIVE (0ms)</span>
         </div>
         <div class="mode-pill" onclick="toggleTradingMode()" style="cursor: pointer;" title="Click to toggle Paper Simulation vs Real CoinDCX Trading">
           <span class="mode-badge" id="wallet-mode-badge">FUTURES WALLET</span>
           <span class="balance-text" id="header-balance">INR 1,154.53</span>
         </div>
+        <!-- Manage-Only (Pause New Trades) Toggle Button -->
+        <button id="btn-toggle-new-trades" class="btn-manage-only" onclick="toggleNewTrades()" title="Stop opening new trades while continuing to manage active open positions">
+          <span id="new-trades-icon">⏸️</span>
+          <span id="new-trades-text">PAUSE NEW TRADES</span>
+        </button>
         <button id="btn-bot-toggle" class="btn-primary-glow" onclick="toggleBot()">
           <span id="bot-toggle-icon">▶</span>
           <span id="bot-toggle-text">START BOT</span>
@@ -81,7 +86,8 @@
     <!-- Trending Futures Coins Carousel & Category Switcher -->
     <section class="ticker-bar">
       <div class="ticker-category-selector">
-        <button class="cat-pill active" id="cat-gainers" onclick="switchTickerCategory('gainers')">🔥 TOP GAINERS</button>
+        <button class="cat-pill active" id="cat-majors" onclick="switchTickerCategory('majors')">⭐ 11 ALLOWED MAJORS</button>
+        <button class="cat-pill" id="cat-gainers" onclick="switchTickerCategory('gainers')">🔥 TOP GAINERS</button>
         <button class="cat-pill" id="cat-volume" onclick="switchTickerCategory('volume')">🚀 HIGH VOLUME</button>
         <button class="cat-pill" id="cat-losers" onclick="switchTickerCategory('losers')">🔻 TOP DIPS (SHORT)</button>
         <button class="cat-pill" id="cat-all" onclick="openAllCoinsModal()">🌐 BROWSE ALL 700+</button>
@@ -623,7 +629,7 @@
             </div>
             <div class="wallet-cell">
               <span class="cell-label">Trade Sizing (Safety)</span>
-              <span class="cell-value" id="card-trade-chunk" style="color: #38bdf8;">₹3,000 / slot</span>
+              <span class="cell-value" id="card-trade-chunk" style="color: #38bdf8;">₹225 / slot</span>
             </div>
             <div class="wallet-cell">
               <span class="cell-label">Active Trade PnL</span>
@@ -660,7 +666,7 @@
               </button>
             </div>
             <div id="risk-mode-desc" style="font-size: 0.68rem; color: #64748b; margin-top: 6px; line-height: 1.3;">
-              🎯 User Mirror Sniper (6x-22x Safe Lev, ₹200-₹500 TP, -65% Margin Defense, 30m Anti-Whipsaw Cooldown).
+              🎯 User Mirror Sniper (6x-22x Safe Lev, ₹200-₹250 Sizing, -48% Margin Defense, 30m Anti-Whipsaw Cooldown).
             </div>
           </div>
 
@@ -668,9 +674,9 @@
           <div class="position-card" id="position-box">
             <div class="pos-header">
               <span>Current Position:</span>
-              <span class="pos-badge" id="pos-status-badge">NO ACTIVE TRADES (0/10 SLOTS)</span>
+              <span class="pos-badge" id="pos-status-badge">NO ACTIVE TRADES (0/5 SLOTS)</span>
             </div>
-            <p class="pos-details" id="pos-details-text">Model Status: [AUTONOMOUS 24/7 ENGINE ACTIVE] - Active slots: 0/10. Dynamic 10-slot manager & full tax/fee audit active.</p>
+            <p class="pos-details" id="pos-details-text">Model Status: [AUTONOMOUS 24/7 ENGINE ACTIVE] - Active slots: 0/5. Dynamic 5-slot manager & full tax/fee audit active.</p>
           </div>
 
           <!-- ========================================================
@@ -696,18 +702,18 @@
             <div class="term-input-group">
               <div class="term-lbl-wrap">
                 <label for="custom-input-margin">Trade Margin (INR):</label>
-                <span class="term-hint" id="term-margin-val-display">₹3,000.00</span>
+                <span class="term-hint" id="term-margin-val-display">₹225.00</span>
               </div>
               <div class="term-input-box">
                 <span class="term-currency">₹</span>
-                <input type="number" id="custom-input-margin" value="3000" min="50" max="100000" step="50" oninput="updateCustomOrderSummary()">
+                <input type="number" id="custom-input-margin" value="225" min="50" max="100000" step="25" oninput="updateCustomOrderSummary()">
               </div>
               <div class="quick-margin-chips">
-                <button type="button" class="q-chip" onclick="setQuickMargin(500)">₹500</button>
-                <button type="button" class="q-chip" onclick="setQuickMargin(1000)">₹1,000</button>
-                <button type="button" class="q-chip" onclick="setQuickMargin(2500)">₹2,500</button>
-                <button type="button" class="q-chip active" onclick="setQuickMargin(3000)">₹3,000</button>
-                <button type="button" class="q-chip" onclick="setQuickMargin(5000)">₹5,000</button>
+                <button type="button" class="q-chip" onclick="setQuickMargin(150)">₹150</button>
+                <button type="button" class="q-chip" onclick="setQuickMargin(200)">₹200</button>
+                <button type="button" class="q-chip active" onclick="setQuickMargin(225)">₹225</button>
+                <button type="button" class="q-chip" onclick="setQuickMargin(250)">₹250</button>
+                <button type="button" class="q-chip" onclick="setQuickMargin(300)">₹300</button>
               </div>
             </div>
 
@@ -760,7 +766,7 @@
               </div>
               <div class="p-row">
                 <span>Est. Loss at Stop-Loss:</span>
-                <span id="term-preview-loss" class="text-amber">🛡️ Protected by Margin Defense (-65% Top-Up)</span>
+                <span id="term-preview-loss" class="text-amber">🛡️ Protected by Margin Defense (-48% Top-Up)</span>
               </div>
             </div>
 
@@ -810,7 +816,7 @@
               </div>
               <div class="trade-hud-cell">
                 <span class="trade-hud-lbl">Total Executions</span>
-                <span class="trade-hud-val text-amber" id="hud-total-trades">0 / 10 Slots</span>
+                <span class="trade-hud-val text-amber" id="hud-total-trades">0 / 5 Slots</span>
               </div>
             </div>
 
@@ -843,11 +849,27 @@
                 </button>
               </div>
             </div>
+
+            <!-- Date Range Filter Bar (IST Timezone) -->
+            <div class="trade-date-filter-bar">
+              <div class="date-quick-tabs">
+                <button type="button" class="date-quick-btn active" id="date-btn-all" onclick="filterTradeDatePreset('ALL')">All Dates</button>
+                <button type="button" class="date-quick-btn" id="date-btn-today" onclick="filterTradeDatePreset('TODAY')">Today (IST)</button>
+                <button type="button" class="date-quick-btn" id="date-btn-yesterday" onclick="filterTradeDatePreset('YESTERDAY')">Yesterday</button>
+              </div>
+              <div class="date-range-inputs">
+                <label for="trade-date-from" class="date-input-lbl">From:</label>
+                <input type="date" id="trade-date-from" class="trade-date-picker" onchange="onTradeDateRangeChanged()" title="Filter trades starting from this date">
+                <label for="trade-date-to" class="date-input-lbl">To:</label>
+                <input type="date" id="trade-date-to" class="trade-date-picker" onchange="onTradeDateRangeChanged()" title="Filter trades up to this date">
+                <button type="button" class="date-clear-btn" id="date-clear-btn" onclick="resetTradeDateFilter()" title="Clear date filter to show all trades">✕ All</button>
+              </div>
+            </div>
           </div>
 
           <div class="trade-log-section" style="margin-top: 0;">
             <div class="trade-log-list" id="trade-log-list">
-              <div class="empty-trades" id="empty-trades-banner">🎯 Diamond Sniper Armed & Standing By (₹30,000 Capital). 0/10 Slots Active. Strict 5-Timeframe Diamond Filter Active. 0 Trades Triggered Yet.</div>
+              <div class="empty-trades" id="empty-trades-banner">🎯 Autonomous Live Engine Armed & Standing By (₹30,000.00 Capital). 0/5 Slots Active. Strict 5-Timeframe Filter Active. 0 Trades Triggered Yet.</div>
             </div>
           </div>
         </div>
@@ -957,6 +979,8 @@
     </div>
   </div>
 
+  <!-- CoinDCX Official Real-Time WebSocket Streaming Client -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <script src="app.js?v=4.0"></script>
 </body>
 </html>
