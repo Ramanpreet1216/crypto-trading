@@ -893,19 +893,18 @@ function setTimeframe(tf) {
 
 // 15. Fetch Trending / High Volume / Top Dips for Ticker Bar
 async function fetchTopGainers() {
-  fetchTickerCategoryData("majors");
+  fetchTickerCategoryData("gainers");
 }
 
-async function fetchTickerCategoryData(cat = "majors") {
+async function fetchTickerCategoryData(cat = "gainers") {
   currentTickerCategory = cat;
   document.querySelectorAll(".cat-pill").forEach(p => {
     p.classList.toggle("active", p.id === `cat-${cat}`);
   });
 
   try {
-    let url = "/api/all_coins?limit=15";
-    if (cat === "majors") url += "&sort=majors";
-    else if (cat === "gainers") url += "&sort=gainers";
+    let url = "/api/all_coins?limit=12";
+    if (cat === "gainers") url += "&sort=gainers";
     else if (cat === "losers") url += "&sort=losers";
     else url += "&sort=volume";
 
@@ -917,7 +916,7 @@ async function fetchTickerCategoryData(cat = "majors") {
     if (coins.length > 0) {
       const container = document.getElementById("ticker-chips-container");
       container.innerHTML = "";
-      coins.forEach(c => {
+      coins.slice(0, 10).forEach(c => {
         const coinName = c.coin;
         const change = parseFloat(c.change_24h || 0);
         const btn = document.createElement("button");
@@ -1010,7 +1009,7 @@ async function syncBotStatus() {
     }
     const elTradeChunk = document.getElementById("card-trade-chunk");
     if (elTradeChunk) {
-      const slotSize = isLive ? Math.round(futuresBal / 5) : 6000;
+      const slotSize = isLive ? Math.round(futuresBal / 10) : Math.round(paperBal / 10);
       elTradeChunk.textContent = `₹${slotSize.toLocaleString("en-IN")} / slot`;
     }
 
@@ -1144,24 +1143,17 @@ async function syncBotStatus() {
         const trailLockPct = Number(pos.trailing_lock_pct || 0);
         const hasProfitLock = trailLockPct > 0 || (pos.trailing_stop && (isShort ? Number(pos.trailing_stop) < entry : Number(pos.trailing_stop) > entry));
 
-        // Disciplined Stop-Loss Level (-8.0% Margin Drawdown or Trailing Profit Lock)
-        const slRoiPct = Number(pos.sl_roi_pct || 8.0);
-        let slDefense = Number(pos.stop_loss || pos.sl_defense_price || 0);
+        // Defense level (-65% Margin Drawdown or Trailing Profit Lock)
+        let slDefense = Number(pos.sl_defense_price || 0);
         if (!slDefense || slDefense <= 0) {
           if (pos.trailing_stop) {
             slDefense = Number(pos.trailing_stop);
+          } else if (pos.stop_loss) {
+            slDefense = Number(pos.stop_loss);
           } else {
-            slDefense = isShort ? (entry * (1.0 + ((slRoiPct / 100.0) / lev))) : (entry * (1.0 - ((slRoiPct / 100.0) / lev)));
+            slDefense = isShort ? (entry * (1.0 + (0.48 / lev))) : (entry * (1.0 - (0.48 / lev)));
           }
         }
-
-        // Target PnL %
-        let targetPnlPct = Number(pos.tp_target_pct || 0);
-        if (!targetPnlPct && entry > 0 && targetVal > 0) {
-          const rawTargetMove = isShort ? ((entry - targetVal) / entry) * 100 : ((targetVal - entry) / entry) * 100;
-          targetPnlPct = Math.max(5, rawTargetMove * lev);
-        }
-        if (!targetPnlPct || targetPnlPct <= 0) targetPnlPct = 14.0;
 
         // Lock notch position on track (if profit locked)
         let lockNotchHtml = '';
@@ -1171,13 +1163,21 @@ async function syncBotStatus() {
           lockNotchHtml = `<div class="pos-gauge-trail-lock" style="left: ${lockNeedlePct.toFixed(1)}%;" title="🔒 Trailing Profit Lock (+${trailLockPct}%): ${formatPrice(slDefense)}"></div>`;
         }
 
-        // Needle percentage: 0% = -8.0% SL cut (-₹28), 50% = Entry (0%), 100% = Target TP
+        // Target PnL %
+        let targetPnlPct = Number(pos.tp_target_pct || 0);
+        if (!targetPnlPct && entry > 0 && targetVal > 0) {
+          const rawTargetMove = isShort ? ((entry - targetVal) / entry) * 100 : ((targetVal - entry) / entry) * 100;
+          targetPnlPct = Math.max(5, rawTargetMove * lev);
+        }
+        if (!targetPnlPct || targetPnlPct <= 0) targetPnlPct = 15.0;
+
+        // Needle percentage: 0% = -48% SL defense, 50% = Entry (0%), 100% = Target TP
         let needlePct = 50.0;
         if (grossPnlPct >= 0) {
           const ratio = Math.min(1.0, grossPnlPct / targetPnlPct);
           needlePct = 50.0 + (ratio * 50.0);
         } else {
-          const ratio = Math.min(1.0, Math.abs(grossPnlPct) / slRoiPct);
+          const ratio = Math.min(1.0, Math.abs(grossPnlPct) / 48.0);
           needlePct = 50.0 - (ratio * 50.0);
         }
         needlePct = Math.max(3, Math.min(97, Math.round(needlePct * 10) / 10));
@@ -1200,9 +1200,9 @@ async function syncBotStatus() {
         const pnlInrSign = curActivePnlInr >= 0 ? "+₹" : "-₹";
         const pnlInrFormatted = `${pnlInrSign}${Math.abs(curActivePnlInr).toFixed(2)}`;
 
-        // Expected INR amounts at Target TP and at Disciplined SL Cut
+        // Expected INR amounts at Target TP and at -48% SL Defense
         const tpGainInr = investedNum * (targetPnlPct / 100.0);
-        const slLossInr = Number(pos.max_loss_inr || (investedNum * (slRoiPct / 100.0)));
+        const slLossInr = investedNum * (48.0 / 100.0);
 
         posHtml += `
           <div class="active-pos-card ${isShort ? 'short-pos' : 'long-pos'}" id="pos-card-${pos.symbol}">
@@ -1223,7 +1223,7 @@ async function syncBotStatus() {
               </div>
               <div class="pos-m-row">
                 <span>Target:</span> <b class="pos-tp-txt">${target} (+${targetPnlPct.toFixed(0)}% / +₹${tpGainInr.toFixed(2)})</b> • 
-                <span>${hasProfitLock ? 'Profit Lock:' : 'Hard SL Cut:'}</span> <b class="${hasProfitLock ? 'pos-lock-txt' : 'pos-sl-txt'}">${hasProfitLock ? '🔒 +' + (trailLockPct || 7) + '% (' + formatPrice(slDefense) + ')' : formatPrice(slDefense) + ' (-' + slRoiPct.toFixed(0) + '% / -₹' + slLossInr.toFixed(2) + ')'}</b>
+                <span>${hasProfitLock ? 'Profit Lock:' : 'SL Defense:'}</span> <b class="${hasProfitLock ? 'pos-lock-txt' : 'pos-sl-txt'}">${hasProfitLock ? '🔒 +' + (trailLockPct || 7) + '% (' + formatPrice(slDefense) + ')' : formatPrice(slDefense) + ' (-48% / -₹' + slLossInr.toFixed(2) + ')'}</b>
               </div>
             </div>
 
@@ -1247,7 +1247,7 @@ async function syncBotStatus() {
               <!-- Legend / Labels Below Bar -->
               <div class="pos-gauge-labels">
                 <div class="pos-gl-item ${hasProfitLock ? 'pos-gl-lock' : 'pos-gl-sl'}">
-                  <span class="pos-gl-title">${hasProfitLock ? `🔒 +${trailLockPct || 7}% Lock` : '🛡️ SL Cut (-₹' + slLossInr.toFixed(0) + ')'}</span>
+                  <span class="pos-gl-title">${hasProfitLock ? `🔒 +${trailLockPct || 7}% Lock` : '🛡️ -48% Def (-₹' + slLossInr.toFixed(0) + ')'}</span>
                   <span class="pos-gl-val">${formatPrice(slDefense)}</span>
                 </div>
                 <div class="pos-gl-item pos-gl-entry">
@@ -1363,7 +1363,7 @@ function updateTradePerformanceHUD(summary) {
     if (elNetPnl) {
       elNetPnl.textContent = "INR +0.00";
       elNetPnl.style.color = "#10b981";
-      elNetPnl.title = "Futures Capital: ₹30,000.00 • Strict 5-Timeframe Live Confluence";
+      elNetPnl.title = "Futures Capital: ₹3,006.31 • Strict 5-Timeframe Live Confluence";
       const cell = elNetPnl.closest(".trade-hud-cell");
       if (cell) cell.style.borderLeftColor = "#10b981";
     }
@@ -1614,7 +1614,7 @@ function renderTradeLogList() {
     else if (dateFilterFrom || dateFilterTo) dateFilterNote = ` in selected date range (${dateFilterFrom || 'start'} to ${dateFilterTo || 'now'})`;
 
     if (currentHistorySource === "PAPER") {
-      elTradeLogList.innerHTML = `<div class="empty-trades" id="empty-trades-banner">🎯 Autonomous Live Engine Armed & Standing By (₹30,000.00 Capital). 0/5 Slots Active. No executions${dateFilterNote} yet.</div>`;
+      elTradeLogList.innerHTML = `<div class="empty-trades" id="empty-trades-banner">🎯 Autonomous Live Engine Armed & Standing By (₹3,006.31 Capital). 0/5 Slots Active. No executions${dateFilterNote} yet.</div>`;
     } else {
       elTradeLogList.innerHTML = `<div class="empty-trades">No ${activeTradeFilter !== 'ALL' ? activeTradeFilter.toLowerCase() : ''} ${activeDirectionFilter !== 'ALL' ? activeDirectionFilter.toLowerCase() + ' ' : ''}executions${dateFilterNote} recorded yet.</div>`;
     }
@@ -3315,15 +3315,14 @@ function handleWebSocketLiveTick(coin, newPrice) {
     elPnlTag.className = `pos-live-pnl-tag ${pnlColorClass}`;
   }
 
-  // Calculate new needle percentage (0% = -8.0% SL cut, 50% = Entry, 100% = Target TP)
-  let targetPnlPct = Number(pos.tp_target_pct || 14.0);
+  // Calculate new needle percentage (0% = -48% Def, 50% = Entry, 100% = Target TP)
+  let targetPnlPct = Number(pos.tp_target_pct || 15.0);
   let needlePct = 50.0;
   if (grossPnlPct >= 0) {
     const ratio = Math.min(1.0, grossPnlPct / targetPnlPct);
     needlePct = 50.0 + (ratio * 50.0);
   } else {
-    const slRoi = Number(pos.sl_roi_pct || 8.0);
-    const ratio = Math.min(1.0, Math.abs(grossPnlPct) / slRoi);
+    const ratio = Math.min(1.0, Math.abs(grossPnlPct) / 48.0);
     needlePct = 50.0 - (ratio * 50.0);
   }
   needlePct = Math.max(3, Math.min(97, Math.round(needlePct * 10) / 10));

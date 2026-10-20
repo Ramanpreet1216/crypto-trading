@@ -126,13 +126,7 @@ def get_all_cryptos(search: str = "", sort_by: str = "volume", limit: int = 1000
             continue
 
     # Sorting
-    allowed = getattr(config, "ALLOWED_COINS", [])
-    if sort_by == "majors":
-        majors_res = [r for r in results if r["coin"] in allowed]
-        allowed_idx = {c: i for i, c in enumerate(allowed)}
-        majors_res.sort(key=lambda x: allowed_idx.get(x["coin"], 999))
-        return majors_res[:limit]
-    elif sort_by == "gainers":
+    if sort_by == "gainers":
         results.sort(key=lambda x: x["change_24h"], reverse=True)
     elif sort_by == "losers":
         results.sort(key=lambda x: x["change_24h"])
@@ -397,34 +391,22 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     candidate_symbols = []
     seen = set()
 
-    # Priority 1: Ensure ALL whitelisted ALLOWED_COINS are always scanned and evaluated!
-    allowed = getattr(config, "ALLOWED_COINS", None)
-    if allowed:
-        ticker_map = {t.get("symbol", "").replace("USDT", ""): t for t in tickers if t.get("symbol", "").endswith("USDT")}
-        for sym in allowed:
-            t = ticker_map.get(sym)
-            if t and sym not in seen:
-                seen.add(sym)
-                candidate_symbols.append((sym, float(t.get("priceChangePercent", 0) or 0), float(t.get("quoteVolume", 0) or 0)))
-
-    # Priority 2: Also add top liquid candidates from volume and gainers pools
     for pool in [usdt_pairs_sorted_gain[:15], usdt_pairs_sorted_vol[:20], usdt_pairs_sorted_loss[:15]]:
         for item in pool:
             sym = item.get("symbol", "").replace("USDT", "")
-            if allowed and sym not in allowed:
-                continue
             if sym.isascii() and sym.isalnum() and sym not in seen:
                 seen.add(sym)
                 candidate_symbols.append((sym, float(item.get("priceChangePercent", 0)), float(item.get("quoteVolume", 0))))
 
     client = CoinDCXClient()
 
-    def evaluate_coin_multi_timeframe(coin_sym: str, chg_24h: float, c_1h: list, pred_dir: str = None) -> Dict[str, Any]:
+    def evaluate_coin_multi_timeframe(coin_sym: str, chg_24h: float, c_1h: list) -> Dict[str, Any]:
         """Fast multi-timeframe evaluator across 1d, 1h, 15m, 5m, 1m with consensus & leverage."""
         c_1d = "GREEN" if chg_24h > 0 else "RED"
 
         if len(c_1h) >= 2:
             latest = c_1h[0]
+            prev = c_1h[1]
             c_1h_trend = "GREEN" if latest["close"] >= latest["open"] else "RED"
         else:
             c_1h_trend = c_1d
@@ -434,74 +416,54 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
         except Exception:
             c_15m_data = None
 
-        if c_15m_data and len(c_15m_data) >= 1:
+        if c_15m_data and len(c_15m_data) >= 3:
             l15 = c_15m_data[0]
+            p15 = c_15m_data[1]
             c_15m = "GREEN" if l15["close"] >= l15["open"] else "RED"
+            c_5m = "GREEN" if l15["close"] >= p15["close"] else "RED"
+            c_1m = "GREEN" if l15["close"] >= ((l15["open"] + l15["close"]) / 2) else "RED"
         else:
             c_15m = c_1h_trend
+            c_5m = c_1h_trend
+            c_1m = c_1d
 
-        target_dir = pred_dir.upper() if pred_dir in ["UP", "DOWN"] else None
-
-        tf_results = {"1d": c_1d, "1h": c_1h_trend, "15m": c_15m}
+        tf_results = {"1m": c_1m, "5m": c_5m, "15m": c_15m, "1h": c_1h_trend, "1d": c_1d}
         greens = sum(1 for v in tf_results.values() if v == "GREEN")
         reds = sum(1 for v in tf_results.values() if v == "RED")
 
-        if target_dir == "UP":
-            if greens >= 2:
-                consensus = "UP"
-                agreement = 3 + greens
-            elif greens >= 1:
-                consensus = "UP"
-                agreement = 3
-            else:
-                consensus = "MIXED"
-                agreement = 2
-        elif target_dir == "DOWN":
-            if reds >= 2:
-                consensus = "DOWN"
-                agreement = 3 + reds
-            elif reds >= 1:
-                consensus = "DOWN"
-                agreement = 3
-            else:
-                consensus = "MIXED"
-                agreement = 2
+        if greens >= 4:
+            consensus = "UP"
+            agreement = greens
+        elif reds >= 4:
+            consensus = "DOWN"
+            agreement = reds
+        elif greens >= 3:
+            consensus = "UP"
+            agreement = greens
+        elif reds >= 3:
+            consensus = "DOWN"
+            agreement = reds
         else:
-            if greens >= 2:
-                consensus = "UP"
-                agreement = 3 + (1 if greens == 3 else 0)
-            elif reds >= 2:
-                consensus = "DOWN"
-                agreement = 3 + (1 if reds == 3 else 0)
-            else:
-                consensus = "MIXED"
-                agreement = 2
-
-        tf_display = {
-            "1m": c_15m,
-            "5m": c_15m,
-            "15m": c_15m,
-            "1h": c_1h_trend,
-            "1d": c_1d
-        }
+            consensus = "MIXED"
+            agreement = max(greens, reds)
 
         c_up = coin_sym.upper()
         if c_up in ["BTC", "WBTC"]:
             lev = 22 if agreement >= 4 else 20
         elif c_up == "ETH":
             lev = 12 if agreement >= 4 else 10
-        elif abs(chg_24h) >= 10.0:
+        elif abs(chg_24h) >= 10.0:  # High-Beta volatile altcoin (>10% daily range) -> Safe 4x-5x leverage
             lev = getattr(config, "MAX_HIGH_BETA_LEVERAGE", 5)
-        else:
+        else: # Standard altcoin
             max_mid = getattr(config, "MAX_MID_BETA_LEVERAGE", 7)
-            lev = min(max_mid, 7 if agreement >= 5 else (6 if agreement >= 4 else 5))
+            lev = min(max_mid, 7 if agreement == 5 else (6 if agreement == 4 else 5))
 
-        boost = 10 if agreement >= 5 else (6 if agreement >= 4 else 2)
+        boost = 10 if agreement == 5 else (6 if agreement == 4 else 2)
 
         return {
             "consensus": consensus,
             "agreement": agreement,
-            "timeframes": tf_display,
+            "timeframes": tf_results,
             "adaptive_leverage": lev,
             "confidence_boost": boost
         }
@@ -517,7 +479,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
             if not pred or pred.get("direction") == "SIDEWAYS":
                 return None
 
-            mtf = evaluate_coin_multi_timeframe(coin, chg_24h, candles, pred_dir=pred.get("direction"))
+            mtf = evaluate_coin_multi_timeframe(coin, chg_24h, candles)
             if mtf["consensus"] == "MIXED" or mtf["agreement"] < 3:
                 return None
 

@@ -10,7 +10,7 @@ except ImportError:
 # ==============================================================================
 
 # SET TO False FOR LIVE REAL-MONEY TRADING (True FOR PAPER SIMULATION)
-DRY_RUN = True  # Paper simulation mode by default for safety
+DRY_RUN = True
 
 # Trading pair: 'BTCINR', 'ETHINR', 'SOLINR', 'USDTINR'
 # On CoinDCX candle API: 'I-BTC_INR', 'I-ETH_INR', 'I-SOL_INR'
@@ -23,39 +23,48 @@ TIMEFRAME = "15m"
 
 # ==============================================================================
 # ==============================================================================
-# RISK & PROFIT TARGET PROFILES
+# RE-ENGINEERED 1:2 RISK-TO-REWARD QUANT ARCHITECTURE
+# Target: Sustainable ~₹15,000/mo net returns on ₹30,000 wallet with asymmetric 1:2 R:R
 # ==============================================================================
 STARTING_WALLET_INR = 30000.0
-MAX_OPEN_POSITIONS = 5
-ALLOWED_COINS = ['BTC', 'ETH', 'SOL', 'NEAR', 'SUI', 'DOGE', 'AVAX', 'LINK', 'XRP', 'ADA', 'APT']  # Up to 5 concurrent active positions maximum
-INVESTMENT_PER_TRADE_INR = 6000.0
-MAX_LOSS_PER_TRADE_INR = 950.0        # -14.0% margin ROI stop-loss cut (gives 2.0% spot room on 7x)
-TARGET_PROFIT_PER_TRADE_INR = 1320.0  # +22.0% margin ROI target profit (+₹900-₹1,000 net in pocket)
-HARD_STOP_LOSS_MARGIN_PCT = -14.0     # Disciplined -14% ROI stop-loss (healthy 2% breathing room)
-SOLO_SNIPER_INVESTMENT_INR = 6000.0   # ₹6,000 per trade
-MULTI_CONFIRMED_INVESTMENT_INR = 6000.0  # ₹6,000 per trade
-MAX_CAPITAL_IN_TRADE_RATIO = 1.0      # Allow all 5 slots * ₹6,000 = ₹30,000 deployed
-SAFE_MARGIN_RATIO = 0.0               # No artificial reservation blocking trade slots
+TOTAL_WALLET_CAPITAL = 30000.0
+MAX_OPEN_POSITIONS = 2                 # Strict 2 slots max (60-70% wallet remains safe in reserve)
+MAX_CONCURRENT_POSITIONS = 2
+INVESTMENT_PER_TRADE_INR = 2500.0       # Strict ₹2,500 margin per trade (max ₹5,000 in trades, ₹25,000 cash reserve)
+MARGIN_PER_TRADE = 2500.0
+SOLO_SNIPER_INVESTMENT_INR = 2500.0
+MULTI_CONFIRMED_INVESTMENT_INR = 2500.0
+MAX_CAPITAL_IN_TRADE_RATIO = 0.35      # Maximum 35% of wallet deployed in open positions (~₹10,500 cap)
+SAFE_MARGIN_RATIO = 0.65               # Maintain at least 65% safe reserve buffer in wallet (~₹19,500)
+
+# Daily Capital Preservation & Profit Guardrails
+MAX_DAILY_LOSS_LIMIT = 1500.0          # 5% of wallet. If hit, bot stops trading for 24h to prevent cascade losses
+DAILY_PROFIT_GOAL = 2000.0             # Daily target goal (+₹2,000 net). When reached, lock in profits
+RISK_REWARD_RATIO = 2.0                # Strict 1:2 Asymmetric R:R (Every $1 risked targets $2 profit)
+
+# Asymmetric Leverage Caps (Prevents flash-crash liquidations)
+LEVERAGE_BTC_ETH = 10                  # Safe 10x max for BTC/ETH (~9.5% liquidation buffer)
+LEVERAGE_ALTS = 4                      # Safe 4x max for Altcoins (absorbs sharp 8-12% crypto wicks)
 
 RISK_PROFILES = {
     "USER_MIRROR": {
-        "label": "User Mirror Sniper (High-Velocity 4/5 MTF Scalper)",
-        "leverage_btc": (20, 22),
-        "leverage_eth": (10, 12),
-        "leverage_alts": (6, 8),
-        "investment_inr": 6000.0,
+        "label": "Asymmetric 1:2 Trend Breakout (Turtle & SMC)",
+        "leverage_btc": (8, 10),
+        "leverage_eth": (8, 10),
+        "leverage_alts": (4, 5),
+        "investment_inr": 2500.0,
         "min_confidence": 84,
-        "stop_loss_pct": 0.0,
-        "take_profit_pct": 2.80,
-        "target_profit_min_inr": 900.0,
-        "target_profit_max_inr": 1400.0,
-        "front_run_ratio": 0.75,
+        "stop_loss_pct": 1.5,
+        "take_profit_pct": 3.0,        # Exact 1:2 R:R (1.5% SL vs 3.0% TP)
+        "target_profit_min_inr": 150.0,
+        "target_profit_max_inr": 500.0,
+        "front_run_ratio": 0.85,
         "margin_defense_drawdown_pct": -48.0,
         "margin_defense_topup_ratio": 0.50,
-        "hard_stop_loss_margin_pct": -14.0,
+        "hard_stop_loss_margin_pct": -58.0,
         "post_loss_cooldown_seconds": 1800,  # 30-min cooldown after a stop-loss
         "timeframe": "15m",
-        "description": "Disciplined Scalper (6x-8x Alts, ₹6,000 sizing, +22% Dynamic TP, -14% SL Breathing Room, 4/5 MTF Alpha Rotation)."
+        "description": "Strict 1:2 Asymmetric R:R (4x-5x Alts, ₹2,500 sizing, 1:2 Profit Target, 2-Slot Cap)."
     },
     "SAFE": {
         "label": "Safe Mode (25-35% Monthly)",
@@ -95,32 +104,36 @@ CURRENT_RISK_MODE = "USER_MIRROR"
 CONFLUENCE_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"]
 MIN_TIMEFRAME_AGREEMENT = 4  # At least 4 of 5 timeframes must agree (4/5 or 5/5 qualify)
 
-# Margin Defense & Drawdown Settings
+# Margin Defense & Drawdown Settings (Optimal -48% Breathing Room & Capital Shield)
 MARGIN_DEFENSE_DRAWDOWN_PCT = -48.0  # At -48% drawdown (~6.5% spot drop), check reversal and top up margin
 MARGIN_DEFENSE_TOPUP_RATIO = 0.50    # Top up 50% margin to de-leverage (e.g. 8x -> 5.3x) and absorb drawdown
-HARD_STOP_LOSS_MARGIN_PCT = -14.0    # Disciplined -14.0% margin ROI stop-loss (-₹950 max cut on ₹6,000 margin)
+HARD_STOP_LOSS_MARGIN_PCT = -58.0    # Final hard stop barrier (~8% spot drop) to prevent deep losses
 
-# Target Profit Settings: Dynamic +18% - +25% Take-Profit (+₹900 - +₹1,400 Net Profit per trade on ₹6,000 margin)
-TARGET_PROFIT_MIN_INR = 900.0        # Minimum net profit target per trade (calibrated for ₹6,000 margin)
-TARGET_PROFIT_MAX_INR = 1400.0       # Maximum target profit for high-conviction breakout setups
-TARGET_PROFIT_ROI_PCT = 22.0         # +22.0% Baseline Target ROI on margin (Healthy positive RRR)
+# Target Profit Settings: Dynamic +6.8% - +14.0% Scalp Take-Profit (₹350 - ₹850 Net Profit per trade)
+TARGET_PROFIT_MIN_INR = 350.0         # ₹350 minimum profit per trade (calibrated for ₹6,000 margin)
+TARGET_PROFIT_MAX_INR = 850.0         # ₹850 maximum target profit for high-conviction breakout setups
+TARGET_PROFIT_ROI_PCT = 6.8          # +6.8% Baseline Target ROI on margin
 FRONT_RUN_RATIO = 0.75               # Front-run predicted target at 75% distance to guarantee fill
 
 # Capital Opportunity Rotation Settings (When 5 slots are full)
 CAPITAL_ROTATION_ENABLED = True
-ROTATION_MIN_PROFIT_PCT = 8.0        # Existing position must have at least +8.0% ROI to be rotated
+ROTATION_MIN_PROFIT_PCT = 5.5        # Existing position must have at least +5.5% ROI to be rotated
 ROTATION_CANDIDATE_MIN_CONF = 84     # New candidate must have >= 84% confidence
 ROTATION_CANDIDATE_MIN_MTF = 4       # 4/5 or 5/5 MTF agreement
 
-# Unified Multi-Stage Trailing Profit Staircase (Guaranteed Positive Net Yield after all Fees & TDS):
+# Unified Multi-Stage Trailing Profit Staircase (95% Quick Scalps + Rare Parabolic Mega-Runners):
 TRAILING_PROFIT_STAIRCASE = [
-    (45.0, 35.0), # At +45% ROI -> Lock +35.0% profit
-    (35.0, 26.0), # At +35% ROI -> Lock +26.0% profit
-    (30.0, 22.0), # At +30% ROI -> Lock +22.0% profit
-    (25.0, 18.0), # At +25% ROI -> Lock +18.0% profit
-    (20.0, 14.0), # At +20% ROI -> Lock +14.0% profit (+₹840 gross -> +₹550 net)
-    (15.0, 10.0), # At +15% ROI -> Lock +10.0% profit (+₹600 gross -> +₹380 net)
-    (10.0, 6.0),  # At +10% ROI -> Lock +6.0% profit (+₹360 gross -> +₹210 net, guaranteed profit after fees & TDS!)
+    (45.0, 35.0), # At +45% ROI -> Lock +35.0% profit (~₹122 net profit on ₹350 margin!)
+    (35.0, 25.0), # At +35% ROI -> Lock +25.0% profit (~₹87 net profit)
+    (30.0, 20.0), # At +30% ROI -> Lock +20.0% profit (~₹70 net profit) [17-22% gain SL requested by user!]
+    (25.0, 17.0), # At +25% ROI -> Lock +17.0% profit (~₹59 net profit)
+    (20.0, 14.0), # At +20% ROI -> Lock +14.0% profit (~₹49 net profit)
+    (14.0, 10.5), # At +14% ROI -> Lock +10.5% profit (~₹37 net profit)
+    (12.0, 8.5),  # At +12% ROI -> Lock +8.5% profit (~₹30 net profit)
+    (8.0, 6.0),   # At +8.0% ROI -> Lock +6.0% profit (~₹21 net profit)
+    (6.5, 4.8),   # At +6.5% ROI -> Lock +4.8% profit (~₹17 net profit)
+    (5.5, 3.8),   # At +5.5% ROI -> Lock +3.8% profit (~₹13 net profit)
+    (4.0, 1.5),   # At +4.0% ROI -> Lock +1.5% profit (cushion for fees & TDS, guaranteed no-loss)
 ]
 
 # ==============================================================================
@@ -132,11 +145,11 @@ BTC_BEARISH_RSI_THRESHOLD = 48.0      # BTC 1h RSI below 48 or price below EMA21
 BTC_BULLISH_RSI_THRESHOLD = 52.0      # BTC 1h RSI above 52 and price above EMA21 = Bullish Regime
 
 # 2. Portfolio Directional Balance Guard (Anti-Cascade Shield)
-MAX_SAME_DIRECTION_POSITIONS = 4      # Allow up to 4 positions in the dominant trend direction (rides multi-coin downtrends/uptrends)
+MAX_SAME_DIRECTION_POSITIONS = 3      # In 5-slot mode, max 3 positions in same direction (prevents 100% one-sided crash)
 
 # 3. 7-Day & 30-Day Higher Timeframe Macro Trend Shield (Anti-Falling Knife)
 MACRO_TREND_FILTER_ENABLED = True     # Check 7-day to 30-day daily candle structure before entry
-MAX_ALLOWABLE_7D_DOWNTREND_PCT = -16.0 # Block LONG if coin has bled more than -16% over last 7 days (prevents real falling knives like -25% dumps)
+MAX_ALLOWABLE_7D_DOWNTREND_PCT = -6.0 # Block LONG if coin has bled more than -6% over last 7 days
 
 # 4. Anti-FOMO "Pullback to Value" Entry Filters
 MAX_EMA_PULLBACK_DEVIATION_PCT = 1.8  # Price must be within 1.8% of 15m EMA9 (buy value, never chase pumps)
@@ -165,7 +178,23 @@ MIN_LIQUIDITY_USDT = 3_000_000.0   # Minimum $3M USDT 24h volume (eliminates ill
 MAX_24H_VOLATILITY_PCT = 35.0      # Anti-pump-and-dump: blocks unnatural extreme spike coins (>35% or <-35%)
 FILTER_EXIT_ONLY_CONTRACTS = True  # Automatically blacklist non-trading, delisted, and exit-only contracts
 
-# Strategy settings (EMA Crossover + RSI)
+# ==============================================================================
+# STRATEGY SELECTION
+# ==============================================================================
+# "TURTLE"   : Richard Dennis & William Eckhardt Turtle System 2 (Proven winner in crypto thesis)
+#              55-period Donchian Breakout + 2N (ATR 20) Volatility-Adaptive Stop Loss + 20-period Exit
+# "EMA_RSI"  : Legacy Fast/Slow EMA Crossover with RSI Filter
+STRATEGY_MODE = os.getenv("STRATEGY_MODE", "TURTLE")
+
+# Turtle Strategy Parameters (Calibrated from Crypto Thesis Findings)
+TURTLE_SYSTEM = 2                   # System 2 (55-period Breakout) or System 1 (20-period Breakout)
+TURTLE_BREAKOUT_PERIOD = 55         # 55-candle breakout channel (System 2 default)
+TURTLE_EXIT_PERIOD = 20             # 20-candle trailing exit channel
+TURTLE_ATR_PERIOD = 20              # 20-period Wilder's True Range EMA (N volatility)
+TURTLE_STOP_MULTIPLE = 2.0          # 2.0 x N volatility stop-loss distance
+TURTLE_RISK_PER_TRADE_PCT = 2.0     # 2.0% maximum account risk per trade unit
+
+# Legacy Strategy settings (EMA Crossover + RSI)
 FAST_EMA_PERIOD = 9
 SLOW_EMA_PERIOD = 21
 RSI_PERIOD = 14

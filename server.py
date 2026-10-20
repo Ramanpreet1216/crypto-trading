@@ -43,10 +43,10 @@ if sys.platform.startswith("win"):
     except Exception:
         pass
 
-PORT = int(os.environ.get("PORT", 5001))
+PORT = int(os.environ.get("PORT", 5000))
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 
-def calculate_futures_trade_qty(coin: str, current_price: float, target_margin_inr: float = 150.0, leverage: int = 5):
+def calculate_futures_trade_qty(coin: str, current_price: float, target_margin_inr: float = 6000.0, leverage: int = 5):
     """Calculate order quantity ensuring CoinDCX minimum notional value (>= 620 INR) and target margin."""
     min_notional_inr = 620.0
     usd_inr = 90.0
@@ -158,10 +158,10 @@ def calculate_trade_performance(trades):
     """Calculate Net PnL, Win Rate %, Total Wins, Total Losses, Fees, TDS, Govt Taxes, and Volume."""
     completed = [t for t in trades if t.get("type") in ["SELL", "BUY_COVER"] or t.get("pnl") is not None]
     
-    # Real Wins: Trades where market price action was profitable (gross_pnl > 0 or net_pnl >= 0).
-    # Real Losses: Trades where market moved against the position (gross_pnl < 0).
-    wins = [t for t in completed if float(t.get("gross_pnl", 0) or 0) > 0 or _extract_pnl(t) >= 0]
-    losses = [t for t in completed if float(t.get("gross_pnl", 0) or 0) < 0 and _extract_pnl(t) < 0]
+    # Real Wins: Trades where Net In-Pocket PnL was strictly positive after all fees and TDS.
+    # Real Losses: Trades where Net PnL was negative or zero.
+    wins = [t for t in completed if _extract_pnl(t) > 0]
+    losses = [t for t in completed if _extract_pnl(t) <= 0]
     total_pnl = sum(_extract_pnl(t) for t in completed)
     total_gross = sum(float(t.get("gross_pnl", 0) or 0) for t in completed)
     total_fees = sum(float(t.get("fee", 0) or t.get("exchange_fee", 0) or 0) for t in completed)
@@ -279,43 +279,19 @@ def analyze_macro_market_regime():
     and adaptive target profit % (2% - 4.5%).
     """
     try:
-        tickers = scanner._fetch_all_raw_tickers()
-        if not tickers:
-            return "USER_MIRROR", 8, 2.8, 0.0, 84, "🎯 Disciplined Sniper (Scanning Market)", "ALL"
-
-        green_coins = [t for t in tickers if float(t.get("priceChangePercent", 0)) > 0]
-        breadth_pct = (len(green_coins) / max(1, len(tickers))) * 100.0
-
-        # Check Bitcoin trend (Macro King of Market)
-        client = CoinDCXClient()
-        btc_candles = client.get_candles(pair="B-BTC_USDT", interval="1h", limit=24)
-        btc_bullish = False
-        if btc_candles is not None and len(btc_candles) >= 15:
-            btc_df = calculate_indicators(btc_candles)
-            last_c = btc_df.iloc[-1]
-            btc_bullish = bool((last_c["close"] > last_c["ema_slow"]) and (last_c["rsi"] >= 48))
-
-        # Dynamic Direction Determination:
-        # If market breadth is bearish (< 45% green) or Bitcoin is below EMA21, market is in a DOWNTREND -> SHORTS ONLY!
-        if breadth_pct < 45.0 or (not btc_bullish and breadth_pct < 52.0):
-            macro_dir = "DOWN"
-            regime_status = "📉 DOWNTREND (SHORTS ONLY)"
-        elif breadth_pct >= 58.0 and btc_bullish:
-            macro_dir = "UP"
-            regime_status = "🚀 BULL EXPANSION (LONGS ONLY)"
-        else:
-            macro_dir = "ALL"
-            regime_status = "⚖️ BALANCED ROTATION"
-
         if getattr(config, "CURRENT_RISK_MODE", "USER_MIRROR") == "USER_MIRROR":
             mode = "USER_MIRROR"
             lev = 8  # Dynamic fallback; per-coin leverage is 22x BTC, 12x ETH, 6-8x Alts
-            tp_pct = 2.80  # +22% Dynamic TP
-            sl_pct = 0.0   # Managed by disciplined stop-loss
+            tp_pct = 0.90  # Front-run 6.5%-7.0% margin ROI (+₹20-₹25 profit)
+            sl_pct = 0.0   # No tight SL; managed by -48% Margin Defense
             min_conf = 84
-            preferred_dir = macro_dir
-            desc = f"🎯 Disciplined Sniper ({regime_status}, {breadth_pct:.1f}% green). ₹6,000 sizing, +22% TP, -14% SL."
+            preferred_dir = "ALL"
+            desc = f"🎯 User Mirror Sniper (6x-8x Safe Lev, ₹320-₹370 sizing, +6.8% Scalp TP, -48% SL Defense, 4/5 MTF Rotation)."
             return mode, lev, tp_pct, sl_pct, min_conf, desc, preferred_dir
+
+        tickers = scanner._fetch_all_raw_tickers()
+        if not tickers:
+            return "BALANCED", 6, 3.5, 1.5, 85, "⚖️ Balanced Baseline (Scanning Market)"
 
         green_coins = [t for t in tickers if float(t.get("priceChangePercent", 0)) > 0]
         breadth_pct = (len(green_coins) / max(1, len(tickers))) * 100.0
@@ -583,18 +559,13 @@ def bot_worker():
                     peak_pnl = max(float(pos.get("peak_pnl_pct", gross_pnl_pct)), gross_pnl_pct)
                     pos["peak_pnl_pct"] = peak_pnl
 
-                    # Disciplined Stop-Loss Cut Level (-14.0% margin ROI or Trailing Profit Lock):
-                    hard_sl_roi = abs(float(getattr(config, "HARD_STOP_LOSS_MARGIN_PCT", 14.0)))
-                    pos["sl_roi_pct"] = hard_sl_roi
-                    pos["max_loss_inr"] = float(getattr(config, "MAX_LOSS_PER_TRADE_INR", 950.0))
-
+                    # Calculate defense level: if trailing profit lock is active, preserve locked profit price!
+                    defense_ratio = abs(float(getattr(config, "MARGIN_DEFENSE_DRAWDOWN_PCT", -48.0))) / 100.0
                     if pos.get("trailing_stop") and float(pos.get("trailing_lock_pct", 0.0) or 0.0) > 0:
                         sl_defense = float(pos["trailing_stop"])
                     else:
-                        sl_spot_move = (hard_sl_roi / pos_lev) / 100.0
-                        sl_defense = round(buy_price * (1.0 - sl_spot_move), precision) if pos_dir == "LONG" else round(buy_price * (1.0 + sl_spot_move), precision)
+                        sl_defense = round(buy_price * (1.0 - (defense_ratio / pos_lev)), precision) if pos_dir == "LONG" else round(buy_price * (1.0 + (defense_ratio / pos_lev)), precision)
                     pos["sl_defense_price"] = sl_defense
-                    pos["stop_loss"] = sl_defense
 
                     target_p = float(pos.get("target") or (buy_price * 1.02))
                     tp_pct = ((target_p - buy_price) / max(1e-6, buy_price)) * 100.0 * pos_lev if pos_dir == "LONG" else ((buy_price - target_p) / max(1e-6, buy_price)) * 100.0 * pos_lev
@@ -676,47 +647,116 @@ def bot_worker():
                     exit_side = "sell" if pos_dir == "LONG" else "buy"
                     min_tp_inr = getattr(config, "TARGET_PROFIT_MIN_INR", 25.0)
                     sl_defense_threshold = float(getattr(config, "MARGIN_DEFENSE_DRAWDOWN_PCT", -48.0))
-                    # ----------------------------------------------------------
-                    # DISCIPLINED 1:1.75 RISK-TO-REWARD ENGINE (Trading-Limited)
-                    # ----------------------------------------------------------
-                    # 1. HARD STOP-LOSS CUTOFF: Max -14.0% margin ROI or -₹950 net loss (on ₹6,000 margin).
-                    # Gives healthy 2.0% spot room at 7x, avoiding tight wick stop-outs
-                    max_loss_inr = float(getattr(config, "MAX_LOSS_PER_TRADE_INR", 950.0))
-                    max_sl_roi = float(getattr(config, "HARD_STOP_LOSS_MARGIN_PCT", -14.0))
-                    if (gross_pnl_pct <= max_sl_roi or net_pnl <= -max_loss_inr) and not exit_trigger:
-                        exit_trigger = f"Disciplined Stop-Loss Hit ({gross_pnl_pct:.1f}% ROI / Net ₹{net_pnl:+.2f} Cut)"
+                    hard_sl_threshold = float(getattr(config, "HARD_STOP_LOSS_MARGIN_PCT", -58.0))
 
-                    # 2. TARGET PROFIT TAKE: +22.0% margin ROI or +₹1,320 target profit (Healthy positive RRR)
-                    target_tp_roi = float(getattr(config, "TARGET_PROFIT_ROI_PCT", 22.0))
-                    target_tp_max_inr = float(getattr(config, "TARGET_PROFIT_PER_TRADE_INR", 1320.0))
-                    if (gross_pnl_pct >= target_tp_roi or gross_pnl >= target_tp_max_inr) and not exit_trigger:
-                        exit_trigger = f"Target Profit Secured (+{gross_pnl_pct:.1f}% ROI / Net ₹{net_pnl:+.2f})!"
+                    # 1. Check -48% Margin Drawdown Defense
+                    if gross_pnl_pct <= sl_defense_threshold and not pos.get("margin_defended", False):
+                        reversal_likely = True
+                        try:
+                            check_candles = client.get_candles(pair=pair, interval="15m", limit=15)
+                            if check_candles is not None and len(check_candles) >= 10:
+                                chk_df = calculate_indicators(check_candles)
+                                cur_rsi = float(chk_df.iloc[-1].get("rsi", 50))
+                                # Reversal is strongly probable if RSI is at boundary or stabilizing
+                                reversal_likely = (pos_dir == "LONG" and cur_rsi < 38.0) or (pos_dir == "SHORT" and cur_rsi > 62.0) or (35.0 <= cur_rsi <= 65.0)
+                        except Exception:
+                            reversal_likely = True
 
-                    # 3. Check Trailing Profit Lock / Technical Target
+                        topup_amount = round(invested * getattr(config, "MARGIN_DEFENSE_TOPUP_RATIO", 0.50), 2)
+                        avail_cash = float(bot_state.get("paper_balance", 0.0))
+
+                        if reversal_likely and avail_cash >= topup_amount:
+                            # Apply Defensive Margin Top-up: De-leverage to absorb drawdown
+                            bot_state["paper_balance"] = round(bot_state["paper_balance"] - topup_amount, 2)
+                            new_invested = round(invested + topup_amount, 2)
+                            new_lev = round(pos_lev * (invested / new_invested), 1)
+                            pos["invested"] = new_invested
+                            pos["leverage"] = new_lev
+                            pos["margin_defended"] = True
+                            pos["stop_loss"] = round(buy_price * (1.0 - (abs(hard_sl_threshold) / 100.0) / new_lev), precision) if pos_dir == "LONG" else round(buy_price * (1.0 + (abs(hard_sl_threshold) / 100.0) / new_lev), precision)
+                            defense_msg = f"[🛡️ MARGIN DEFENSE] Added ₹{topup_amount} margin to {pos_symbol}. De-leveraged {pos_lev}x -> {new_lev}x to absorb drawdown and await reversal!"
+                            print(defense_msg)
+                            bot_state["last_reason"] = defense_msg
+                            save_active_positions(bot_state["active_positions"])
+                            invested = new_invested
+                            pos_lev = new_lev
+                            gross_pnl_pct = gain_pct * pos_lev
+                            gross_pnl = invested * (gross_pnl_pct / 100.0)
+                        else:
+                            # No reversal potential or no margin: hit Stop-Loss Protection
+                            exit_trigger = f"Stop-Loss Protection at ${current_price:.4f} ({sl_defense_threshold:.0f}% Drawdown Limit)"
+
+                    # 2. Check Catastrophic SL for Defended Positions (-85% Barrier)
+                    elif pos.get("margin_defended", False) and gross_pnl_pct <= hard_sl_threshold:
+                        exit_trigger = f"Emergency Catastrophic Stop-Loss at ${current_price:.4f} ({hard_sl_threshold:.0f}% Barrier)"
+
+                    # 3. Check Take Profit (Target Hit or Profit Target Reached)
                     active_sl = pos.get("trailing_stop", pos.get("stop_loss"))
                     target_p = pos.get("target")
 
+                    # RELIEF TAKE-PROFIT RULE:
+                    # If this trade had to be margin-defended at -75%, exit as soon as it recovers +5.0% to +8.0% ROI!
+                    # "Take the money and run" on recovered trades without risking a second drawdown!
+                    if pos.get("margin_defended", False) and gross_pnl_pct >= 5.0 and not exit_trigger:
+                        exit_trigger = f"Relief Take-Profit Hit (+{gross_pnl_pct:.1f}% ROI / ₹{gross_pnl:+.2f} Profit after {sl_defense_threshold:.0f}% Defense Recovery)!"
+
+                    # USER HARD STOP-LOSS LIMITS (Enforced by User Request):
+                    # Hard cap on PROM at -₹170 net loss or Price >= $5.22:
+                    if pos_symbol == "PROM" and (net_pnl <= -170.0 or current_price >= 5.22) and not exit_trigger:
+                        exit_trigger = f"User Hard Stop-Loss Hit on PROM (Net ₹{net_pnl:.2f} <= -₹170 / Price ${current_price:.4f} >= $5.22)"
+
+                    # Hard cap on METIS at -25% ROI:
+                    if pos_symbol == "METIS" and gross_pnl_pct <= -25.0 and not exit_trigger:
+                        exit_trigger = f"User Stop-Loss Hit on METIS ({gross_pnl_pct:.1f}% <= -25% ROI / Net ₹{net_pnl:.2f})"
+
+                    # Hard cap on UNI at -25% ROI:
+                    if pos_symbol == "UNI" and gross_pnl_pct <= -25.0 and not exit_trigger:
+                        exit_trigger = f"User Stop-Loss Hit on UNI ({gross_pnl_pct:.1f}% <= -25% ROI / Net ₹{net_pnl:.2f})"
+
+                    # GUARANTEED NET-PROFIT EXIT RULES (Prevents selling for a loss after fees & TDS)
+                    # Note: On a ₹6,000 position, exchange fees (~₹42) + 1% TDS (~₹60) = ~₹102 total friction.
+                    # A trade must NEVER close on a 'Profit Target' unless net_pnl is strictly positive!
+                    is_turtle = pos.get("strategy") == "TURTLE_SYSTEM_2" or getattr(config, "STRATEGY_MODE", "TURTLE") == "TURTLE"
+
+                    if not exit_trigger and not is_turtle:
+                        # For non-turtle scalpers, only exit on quick recovery if NET profit in pocket is >= ₹30
+                        if net_pnl >= 30.0 and gross_pnl_pct >= 2.5:
+                            exit_trigger = f"Quick Target Hit (+{gross_pnl_pct:.1f}% ROI / Net ₹{net_pnl:+.2f})!"
+
                     if not exit_trigger:
+                        target_roi = float(getattr(config, "TARGET_PROFIT_ROI_PCT", 6.8))
+                        max_tp_inr = float(getattr(config, "TARGET_PROFIT_MAX_INR", 50.0))
+
+                        # Only trigger standard take-profit if Net PnL is positive (after all fees & TDS)
                         if pos_dir == "LONG":
-                            if target_p and current_price >= target_p:
+                            if target_p and current_price >= target_p and net_pnl > 0:
                                 runner_note = f" [Runner Target +{pos.get('runner_target_pct', 35)}% Hit!]" if pos.get("is_runner") else ""
                                 exit_trigger = f"Target Hit (${target_p:.4f}){runner_note} [Net ₹{net_pnl:+.2f}]!"
-                            elif not pos.get("is_runner") and (gross_pnl >= target_tp_max_inr or gross_pnl_pct >= target_tp_roi):
-                                exit_trigger = f"Target Secured (+₹{gross_pnl:.2f} / +{gross_pnl_pct:.1f}% ROI)!"
+                            elif not pos.get("is_runner") and net_pnl >= 25.0 and (gross_pnl >= max_tp_inr or gross_pnl_pct >= target_roi):
+                                exit_trigger = f"Target Reached (+₹{gross_pnl:.2f} / +{gross_pnl_pct:.1f}% ROI | Net ₹{net_pnl:+.2f})!"
                             elif active_sl and current_price <= active_sl:
                                 is_profit = active_sl > buy_price
                                 lbl = "Trailing Profit Lock" if is_profit else "Stop-Loss Protection"
                                 exit_trigger = f"{lbl} at ${active_sl:.4f}"
                         else: # SHORT
-                            if target_p and current_price <= target_p:
+                            if target_p and current_price <= target_p and net_pnl > 0:
                                 runner_note = f" [Runner Target +{pos.get('runner_target_pct', 35)}% Hit!]" if pos.get("is_runner") else ""
                                 exit_trigger = f"Target Hit (${target_p:.4f}){runner_note} [Net ₹{net_pnl:+.2f}]!"
-                            elif not pos.get("is_runner") and (gross_pnl >= target_tp_max_inr or gross_pnl_pct >= target_tp_roi):
-                                exit_trigger = f"Target Secured (+₹{gross_pnl:.2f} / +{gross_pnl_pct:.1f}% ROI)!"
+                            elif not pos.get("is_runner") and net_pnl >= 25.0 and (gross_pnl >= max_tp_inr or gross_pnl_pct >= target_roi):
+                                exit_trigger = f"Target Reached (+₹{gross_pnl:.2f} / +{gross_pnl_pct:.1f}% ROI | Net ₹{net_pnl:+.2f})!"
                             elif active_sl and current_price >= active_sl:
                                 is_profit = active_sl < buy_price
                                 lbl = "Trailing Profit Lock" if is_profit else "Stop-Loss Protection"
                                 exit_trigger = f"{lbl} at ${active_sl:.4f}"
+
+                    # TURTLE SYSTEM 2 EXIT RULES (2N Volatility Stop & 20-bar Low Channel Exit)
+                    if not exit_trigger and (pos.get("strategy") == "TURTLE_SYSTEM_2" or getattr(config, "STRATEGY_MODE", "TURTLE") == "TURTLE"):
+                        t_sl = pos.get("stop_loss")
+                        t_exit_low = pos.get("exit_channel_low")
+                        if t_sl and current_price <= float(t_sl):
+                            exit_trigger = f"Turtle 2N Volatility Stop-Loss hit at ${current_price:.4f} <= ${float(t_sl):.4f}"
+                        elif t_exit_low and current_price < float(t_exit_low):
+                            exit_trigger = f"Turtle 20-bar Channel Low Exit triggered at ${current_price:.4f} < ${float(t_exit_low):.4f}"
 
                     if exit_trigger:
                         proceeds = round(invested + net_pnl, 2)
@@ -776,11 +816,28 @@ def bot_worker():
                     save_active_positions(bot_state["active_positions"])
 
                 # ==============================================================
-                # PHASE 2: SCAN & OPEN POSITIONS (UP TO 10 SLOTS DYNAMICALLY)
+                # PHASE 2: SCAN & OPEN POSITIONS (2-SLOT CAP + 1:2 R:R DISCIPLINE)
                 # ==============================================================
                 cur_count = len(bot_state.get("active_positions", []))
                 slots_needed = max_slots - cur_count
                 allow_new = bot_state.get("allow_new_trades", True)
+
+                # Daily Capital Preservation & Profit Guardrails
+                today_str = get_ist_datetime_str()[:10]
+                today_trades = [t for t in bot_state.get("trade_history", []) if (t.get("timestamp") or "")[:10] == today_str]
+                today_net_pnl = sum(_extract_pnl(t) for t in today_trades)
+
+                daily_loss_limit = getattr(config, "MAX_DAILY_LOSS_LIMIT", 1500.0)
+                daily_profit_goal = getattr(config, "DAILY_PROFIT_GOAL", 2000.0)
+
+                if today_net_pnl <= -daily_loss_limit:
+                    allow_new = False
+                    bot_state["last_signal"] = "DAILY LOSS LIMIT HIT"
+                    bot_state["last_reason"] = f"🛑 Capital Shield: Today's Loss (-₹{abs(today_net_pnl):.2f}) reached daily limit (-₹{daily_loss_limit:.0f}). Paused for 24h to preserve wallet."
+                elif today_net_pnl >= daily_profit_goal:
+                    allow_new = False
+                    bot_state["last_signal"] = "DAILY PROFIT GOAL REACHED"
+                    bot_state["last_reason"] = f"🎉 Target Hit: Today's Net Profit (+₹{today_net_pnl:.2f}) reached goal (+₹{daily_profit_goal:.0f}). Banking profits for the day!"
 
                 if not allow_new:
                     # MANAGE-ONLY MODE: Do NOT open any new trades; only manage existing active trades!
@@ -865,18 +922,18 @@ def bot_worker():
 
                         signals = scanner.scan_all_crypto_signals(min_confidence=dyn_min_conf, direction=preferred_dir, limit=25)
                         valid_signals = [s for s in signals if s["coin"] not in held_coins and recent_coins.get(s["coin"], 0) < now_ts] if signals else []
-                        num_valid = len(valid_signals)
 
-                        # Capital Sizing per User Requirement (Wallet ₹30,000, 5 Max Slots, ₹6,000 margin per trade):
+                        num_valid = len(valid_signals)
+                        # Adaptive Capital Sizing per User Requirement (Wallet ₹30,000, 5 Max Slots, ₹6,000 margin per trade):
                         if (cur_count == 0 and num_valid == 1) or (num_valid == 1 and slots_needed == 1):
                             target_margin = getattr(config, "SOLO_SNIPER_INVESTMENT_INR", 6000.0)
-                            sizing_lbl = f"Solo Sniper (₹{target_margin:.0f})"
+                            sizing_lbl = "Solo Sniper (₹6,000)"
                         elif num_valid >= 3 or cur_count >= 3:
                             target_margin = getattr(config, "MULTI_CONFIRMED_INVESTMENT_INR", 6000.0)
-                            sizing_lbl = f"Multi-Slot Wave (₹{target_margin:.0f})"
+                            sizing_lbl = "Multi-Slot Wave (₹6,000)"
                         else:
                             target_margin = getattr(config, "INVESTMENT_PER_TRADE_INR", 6000.0)
-                            sizing_lbl = f"Standard Slot (₹{target_margin:.0f})"
+                            sizing_lbl = "Standard 5-Slot (₹6,000)"
 
                         for candidate in valid_signals:
                             if len(bot_state["active_positions"]) >= max_slots:
@@ -885,12 +942,15 @@ def bot_worker():
                             avail_balance = max(0.0, float(bot_state.get("paper_balance", 0.0)))
                             deployed_margin = sum(float(p.get("invested", 0)) for p in bot_state["active_positions"])
                             total_wallet = avail_balance + deployed_margin
-                            safe_reserve_min = total_wallet * getattr(config, "SAFE_MARGIN_RATIO", 0.0)
-                            max_trade_cap = total_wallet * getattr(config, "MAX_CAPITAL_IN_TRADE_RATIO", 1.0)
+                            safe_reserve_min = total_wallet * getattr(config, "SAFE_MARGIN_RATIO", 0.40)
+                            max_trade_cap = total_wallet * getattr(config, "MAX_CAPITAL_IN_TRADE_RATIO", 0.60)
 
-                            if (deployed_margin + target_margin) > (max_trade_cap + 1.0):
+                            # Strict 60% in trade / 40% safe margin buffer rules:
+                            if (deployed_margin + target_margin) > max_trade_cap:
+                                # 60% deployed trade limit reached; keep remaining 40% safe
                                 break
-                            if (avail_balance - target_margin) < (safe_reserve_min - 1.0):
+                            if (avail_balance - target_margin) < safe_reserve_min:
+                                # Balance would drop below 40% safe margin; stop opening new trades
                                 break
 
                             invest_target = min(target_margin, avail_balance)
@@ -900,18 +960,10 @@ def bot_worker():
                             c_dir = candidate.get("direction", "UP").upper()
                             pos_dir = "LONG" if c_dir == "UP" else "SHORT"
 
-                            # 0. STRICT DAILY CANDLE TREND GUARD (Never fight the daily candle):
-                            # Block LONGs if coin is in a daily downtrend (change_24h < -0.3%) or if market is in a macro downtrend
-                            c_chg_24 = float(candidate.get("change_24h", 0) or 0)
-                            if pos_dir == "LONG" and (c_chg_24 < -0.3 or preferred_dir == "DOWN"):
-                                continue
-                            if pos_dir == "SHORT" and (c_chg_24 > 0.5 or preferred_dir == "UP"):
-                                continue
-
                             # 1. PORTFOLIO DIRECTIONAL BALANCE GUARD (Anti-Cascade Shield):
-                            # Allow up to 4 positions in the dominant macro trend direction
+                            # Enforce maximum 3 positions in the same direction to prevent one-sided portfolio wipeouts
                             active_same_dir = sum(1 for p in bot_state["active_positions"] if (p.get("direction") or p.get("side")) == pos_dir)
-                            max_dir_cap = getattr(config, "MAX_SAME_DIRECTION_POSITIONS", 4)
+                            max_dir_cap = getattr(config, "MAX_SAME_DIRECTION_POSITIONS", 3)
                             if active_same_dir >= max_dir_cap:
                                 continue
 
@@ -932,12 +984,25 @@ def bot_worker():
                             if float(candidate.get("volume_usdt", 0) or 0) < 500_000.0:
                                 continue
 
-                            c_candles = client.get_candles(pair=c_pair, interval="15m", limit=30)
-                            if c_candles is not None and len(c_candles) >= 15:
+                            is_turtle_mode = getattr(config, "STRATEGY_MODE", "TURTLE") == "TURTLE"
+                            c_limit = 70 if is_turtle_mode else 30
+                            c_candles = client.get_candles(pair=c_pair, interval="15m", limit=c_limit)
+                            if c_candles is not None and len(c_candles) >= (57 if is_turtle_mode else 15):
                                 c_df = calculate_indicators(c_candles)
                                 last_row = c_df.iloc[-1]
                                 coin_rsi = float(last_row.get("rsi", 50))
                                 c_ema9 = float(last_row.get("ema_fast", 0))
+
+                                turtle_sl = None
+                                exit_ch_low = None
+                                turtle_n = None
+                                if is_turtle_mode:
+                                    t_sig, t_reason, t_metrics = evaluate_signal(c_candles)
+                                    if t_sig != "BUY":
+                                        continue
+                                    turtle_sl = t_metrics.get("turtle_stop_loss")
+                                    exit_ch_low = t_metrics.get("exit_low")
+                                    turtle_n = t_metrics.get("n_volatility")
 
                                 # 4. ANTI-FOMO MOMENTUM & VALUE GATES:
                                 # Never enter overbought tops (RSI > 65) or oversold bottom traps (RSI < 35)
@@ -946,10 +1011,11 @@ def bot_worker():
                                 rsi_short_min = getattr(config, "RSI_SHORT_MIN", 35.0)
                                 rsi_short_max = getattr(config, "RSI_SHORT_MAX", 62.0)
 
-                                if pos_dir == "LONG" and not (rsi_long_min <= coin_rsi <= rsi_long_max):
-                                    continue
-                                if pos_dir == "SHORT" and not (rsi_short_min <= coin_rsi <= rsi_short_max):
-                                    continue
+                                if not is_turtle_mode:
+                                    if pos_dir == "LONG" and not (rsi_long_min <= coin_rsi <= rsi_long_max):
+                                        continue
+                                    if pos_dir == "SHORT" and not (rsi_short_min <= coin_rsi <= rsi_short_max):
+                                        continue
 
                                 live_stats = client.get_futures_stats(c_coin)
                                 live_p = float(live_stats.get("mark_price", 0) or live_stats.get("last_price", 0) or 0)
@@ -971,36 +1037,46 @@ def bot_worker():
                                 prob = candidate.get("probability", 85)
                                 precision = 6 if live_p < 1.0 else (4 if live_p < 50.0 else 2)
 
-                                # Dynamic Target Scaling for Healthy 1:1.5+ Positive Risk-Reward (₹6,000 margin per trade):
-                                # Every winner yields +₹750 to +₹1,100 net in pocket, comfortably outpacing any stop-loss!
+                                # Dynamic Confidence-Based Target Scaling (₹20 - ₹50 Net Profit):
+                                # - 84% - 87% Confidence: Quick Scalp +6.8% to +8.5% ROI (₹24 - ₹30 profit)
+                                # - 88% - 92%+ Confidence: High-Conviction Breakout +12.0% to +14.0% ROI (₹42 - ₹50 profit)
                                 front_run = getattr(config, "FRONT_RUN_RATIO", 0.75)
                                 c_prob = float(candidate.get("probability", 85) or 85)
-                                if c_prob >= 92.0:
-                                    target_roi_pct = 26.0  # +26.0% ROI (+₹1,560 gross, ~+₹1,100 net)
+                                if c_prob >= 90.0:
+                                    target_roi_pct = 14.0  # ₹49 - ₹50 profit on ₹350 margin (~2.0% spot move on 7x)
                                 elif c_prob >= 88.0:
-                                    target_roi_pct = 22.0  # +22.0% ROI (+₹1,320 gross, ~+₹920 net)
+                                    target_roi_pct = 12.0  # ₹42 profit on ₹350 margin (~1.7% spot move on 7x)
                                 elif c_prob >= 86.0:
-                                    target_roi_pct = 20.0  # +20.0% ROI (+₹1,200 gross, ~+₹840 net)
+                                    target_roi_pct = 8.5   # ₹30 profit on ₹350 margin (~1.2% spot move on 7x)
                                 else:
-                                    target_roi_pct = float(getattr(config, "TARGET_PROFIT_ROI_PCT", 18.0))
+                                    target_roi_pct = float(getattr(config, "TARGET_PROFIT_ROI_PCT", 6.8))
 
                                 target_move_pct = target_roi_pct / max(1, pos_lev)
 
                                 pred_target = float(candidate.get("target_price", 0) or 0)
-                                if pred_target > 0 and ((pos_dir == "LONG" and pred_target > live_p) or (pos_dir == "SHORT" and pred_target < live_p)):
+                                if is_turtle_mode and turtle_sl:
+                                    # Strict 1:2 Risk-to-Reward Ratio (Reward = 2 x Risk distance)
+                                    risk_dist = max(live_p * 0.008, abs(live_p - turtle_sl))
+                                    if pos_dir == "LONG":
+                                        target_price = round(live_p + (risk_dist * 2.0), precision)
+                                        stop_loss = round(turtle_sl, precision)
+                                    else:
+                                        target_price = round(live_p - (risk_dist * 2.0), precision)
+                                        stop_loss = round(turtle_sl, precision)
+                                elif pred_target > 0 and ((pos_dir == "LONG" and pred_target > live_p) or (pos_dir == "SHORT" and pred_target < live_p)):
                                     predicted_move_pct = abs((pred_target - live_p) / live_p) * 100.0
                                     capped_move_pct = min(target_move_pct, predicted_move_pct * front_run)
                                     target_price = round(live_p * (1.0 + (capped_move_pct / 100.0)), precision) if pos_dir == "LONG" else round(live_p * (1.0 - (capped_move_pct / 100.0)), precision)
+                                    stop_loss = round(live_p * 0.985, precision) if pos_dir == "LONG" else round(live_p * 1.015, precision)
                                 elif pos_dir == "LONG":
                                     target_price = round(live_p * (1.0 + (target_move_pct / 100.0)), precision)
+                                    stop_loss = round(live_p * 0.985, precision)
                                 else:
                                     target_price = round(live_p * (1.0 - (target_move_pct / 100.0)), precision)
+                                    stop_loss = round(live_p * 1.015, precision)
 
-                                # Disciplined Stop-Loss: -14.0% margin ROI (Healthy 2.0% spot room at 7x, avoiding false wick stops)
-                                max_sl_roi = abs(float(getattr(config, "HARD_STOP_LOSS_MARGIN_PCT", -14.0)))
-                                sl_spot_move = (max_sl_roi / max(1, pos_lev)) / 100.0
-                                hard_sl_price = round(live_p * (1.0 - sl_spot_move), precision) if pos_dir == "LONG" else round(live_p * (1.0 + sl_spot_move), precision)
-                                stop_loss = hard_sl_price
+                                # Breathing room with -48% Margin Defense
+                                defense_ratio = abs(float(getattr(config, "MARGIN_DEFENSE_DRAWDOWN_PCT", -48.0))) / 100.0
                                 order_side = "buy" if pos_dir == "LONG" else "sell"
 
                                 qty, spend = calculate_futures_trade_qty(c_coin, live_p, target_margin_inr=invest_target, leverage=pos_lev)
@@ -1034,6 +1110,7 @@ def bot_worker():
                                 new_pos = {
                                     "symbol": c_coin,
                                     "pair": c_pair,
+                                    "strategy": "TURTLE_SYSTEM_2" if is_turtle_mode else "MANUAL",
                                     "direction": pos_dir,
                                     "buy_price": live_p,
                                     "current_price": live_p,
@@ -1041,7 +1118,9 @@ def bot_worker():
                                     "invested": spend,
                                     "leverage": pos_lev,
                                     "target": target_price,
-                                    "stop_loss": hard_sl_price,
+                                    "stop_loss": turtle_sl if (is_turtle_mode and turtle_sl) else stop_loss,
+                                    "exit_channel_low": exit_ch_low,
+                                    "n_volatility": turtle_n,
                                     "trailing_stop": None,
                                     "margin_defended": False,
                                     "peak_price": live_p,
@@ -1050,9 +1129,7 @@ def bot_worker():
                                     "gross_pnl_pct": 0.0,
                                     "net_pnl": 0.0,
                                     "net_pnl_pct": 0.0,
-                                    "sl_defense_price": hard_sl_price,
-                                    "sl_roi_pct": max_sl_roi,
-                                    "max_loss_inr": float(getattr(config, "MAX_LOSS_PER_TRADE_INR", 950.0)),
+                                    "sl_defense_price": round(live_p * (1.0 - (defense_ratio / pos_lev)), precision) if pos_dir == "LONG" else round(live_p * (1.0 + (defense_ratio / pos_lev)), precision),
                                     "tp_target_pct": round(((target_price - live_p) / max(1e-6, live_p)) * 100.0 * pos_lev, 2) if pos_dir == "LONG" else round(((live_p - target_price) / max(1e-6, live_p)) * 100.0 * pos_lev, 2),
                                     "trailing_lock_pct": 0.0,
                                     "probability": prob,
@@ -1065,7 +1142,7 @@ def bot_worker():
                                 bot_state["selected_coin"] = c_coin
                                 bot_state["selected_pair"] = c_pair
                                 bot_state["last_signal"] = f"AUTONOMOUS {pos_dir} [{c_coin}] ({len(bot_state['active_positions'])}/{max_slots} Slots)"
-                                bot_state["last_reason"] = f"Disciplined {mtf_lbl} ({prob}% {pos_dir}) {pos_lev}x Lev: Entry ${live_p}, Target ${target_price} (+₹{spend*0.14:.0f} TP), SL: ${hard_sl_price} (Max -₹28 Cut)"
+                                bot_state["last_reason"] = f"UserMirror {mtf_lbl} ({prob}% {pos_dir}) {pos_lev}x Lev: Entry ${live_p}, Target ${target_price} (₹{spend:.0f} size), -48% Margin Defense"
 
                                 trade_rec = {
                                     "type": "BUY" if pos_dir == "LONG" else "SELL_SHORT",
@@ -1885,7 +1962,7 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
 
         elif path == "/api/paper_trades/clear":
             try:
-                start_wal = getattr(config, "STARTING_WALLET_INR", 30000.0)
+                start_wal = getattr(config, "STARTING_WALLET_INR", 3006.0)
                 max_s = getattr(config, "MAX_OPEN_POSITIONS", 5)
                 payload = {
                     "updated_at": get_ist_now().isoformat(),

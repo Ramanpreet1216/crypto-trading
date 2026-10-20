@@ -147,6 +147,20 @@ def predict_next_move(df: pd.DataFrame, forecast_steps: int = 10) -> Dict[str, A
             confluences.append("Heavy Volume Sell Pressure (+15%)")
 
     # ---------------------------------------------------------
+    # FACTOR 6: Turtle Donchian Channel Breakout (Dennis System)
+    # ---------------------------------------------------------
+    if n >= 25:
+        turtle_lookback = min(55, n - 1)
+        channel_high = float(np.max(highs[-turtle_lookback - 1:-1]))
+        channel_low = float(np.min(lows[-turtle_lookback - 1:-1]))
+        if curr_price > channel_high:
+            bullish_score += 30
+            confluences.append(f"Turtle Breakout: Crossed {turtle_lookback}-bar Channel High (+30%)")
+        elif curr_price < channel_low:
+            bearish_score += 30
+            confluences.append(f"Turtle Breakdown: Broke {turtle_lookback}-bar Channel Low (+30%)")
+
+    # ---------------------------------------------------------
     # FINAL PREDICTION SYNTHESIS
     # ---------------------------------------------------------
     total_score = bullish_score + bearish_score
