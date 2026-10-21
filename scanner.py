@@ -358,10 +358,13 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
             exit_only_set = set()
 
     # 2. INSTITUTIONAL LIQUIDITY & ANTI-GHOST FILTER:
-    # Requires minimum $3,000,000 USDT 24h volume.
-    # Excludes extreme unnatural pump-and-dump spikes (>35% or <-35%) that create catastrophic wicks.
-    min_vol = getattr(config, "MIN_LIQUIDITY_USDT", 3_000_000.0)
+    # Requires minimum $5,000,000 USDT 24h volume.
+    # Excludes stablecoins, fiat mirrors, and extreme unnatural pump-and-dump spikes (>35% or <-35%).
+    min_vol = getattr(config, "MIN_LIQUIDITY_USDT", 5_000_000.0)
     max_volatility = getattr(config, "MAX_24H_VOLATILITY_PCT", 35.0)
+    stable_blacklist = getattr(config, "STABLECOIN_BLACKLIST", {
+        "USDT", "USDC", "FDUSD", "TUSD", "BUSD", "DAI", "USDP", "EUR", "AEUR"
+    })
 
     usdt_pairs = [
         t for t in tickers 
@@ -370,6 +373,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
         and float(t.get("quoteVolume", 0) or 0) >= min_vol
         and abs(float(t.get("priceChangePercent", 0))) <= max_volatility
         and t.get("symbol", "").replace("USDT", "") not in exit_only_set
+        and t.get("symbol", "").replace("USDT", "") not in stable_blacklist
     ]
     if not usdt_pairs:
         # Fallback to top volume liquid pairs if volume was unusually high
@@ -378,6 +382,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
             if t.get("symbol", "").endswith("USDT") 
             and t.get("priceChangePercent")
             and t.get("symbol", "").replace("USDT", "") not in exit_only_set
+            and t.get("symbol", "").replace("USDT", "") not in stable_blacklist
         ]
         usdt_pairs = sorted(usdt_pairs, key=lambda x: float(x.get("quoteVolume", 0) or 0), reverse=True)[:35]
         if not usdt_pairs:
@@ -394,53 +399,68 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     for pool in [usdt_pairs_sorted_gain[:15], usdt_pairs_sorted_vol[:20], usdt_pairs_sorted_loss[:15]]:
         for item in pool:
             sym = item.get("symbol", "").replace("USDT", "")
-            if sym.isascii() and sym.isalnum() and sym not in seen:
+            if sym.isascii() and sym.isalnum() and sym not in seen and sym not in stable_blacklist:
                 seen.add(sym)
                 candidate_symbols.append((sym, float(item.get("priceChangePercent", 0)), float(item.get("quoteVolume", 0))))
 
     client = CoinDCXClient()
 
     def evaluate_coin_multi_timeframe(coin_sym: str, chg_24h: float, c_1h: list) -> Dict[str, Any]:
-        """Fast multi-timeframe evaluator across 1d, 1h, 15m, 5m, 1m with consensus & leverage."""
+        """
+        True multi-timeframe evaluator across 1d, 1h, 15m, 5m, 1m with consensus, anti-wick gate & safe leverage.
+        """
+        # 1. Daily Trend (1d)
         c_1d = "GREEN" if chg_24h > 0 else "RED"
 
+        # 2. 1-Hour Trend (1h)
         if len(c_1h) >= 2:
-            latest = c_1h[0]
-            prev = c_1h[1]
-            c_1h_trend = "GREEN" if latest["close"] >= latest["open"] else "RED"
+            latest_1h = c_1h[0]
+            c_1h_trend = "GREEN" if latest_1h["close"] >= latest_1h["open"] else "RED"
         else:
             c_1h_trend = c_1d
 
+        # 3. 15-Minute Trend (15m)
         try:
             c_15m_data = client.get_futures_candles(coin_sym, interval="15m", limit=5)
+            if c_15m_data and len(c_15m_data) >= 2:
+                l15 = c_15m_data[0]
+                c_15m = "GREEN" if l15["close"] >= l15["open"] else "RED"
+            else:
+                c_15m = c_1h_trend
         except Exception:
-            c_15m_data = None
-
-        if c_15m_data and len(c_15m_data) >= 3:
-            l15 = c_15m_data[0]
-            p15 = c_15m_data[1]
-            c_15m = "GREEN" if l15["close"] >= l15["open"] else "RED"
-            c_5m = "GREEN" if l15["close"] >= p15["close"] else "RED"
-            c_1m = "GREEN" if l15["close"] >= ((l15["open"] + l15["close"]) / 2) else "RED"
-        else:
             c_15m = c_1h_trend
-            c_5m = c_1h_trend
-            c_1m = c_1d
+
+        # 4. 5-Minute Momentum (5m)
+        try:
+            c_5m_data = client.get_futures_candles(coin_sym, interval="5m", limit=5)
+            if c_5m_data and len(c_5m_data) >= 2:
+                l5 = c_5m_data[0]
+                c_5m = "GREEN" if l5["close"] >= l5["open"] else "RED"
+            else:
+                c_5m = c_15m
+        except Exception:
+            c_5m = c_15m
+
+        # 5. 1-Minute Timing & Anti-Trap Pullback Gate (1m)
+        try:
+            c_1m_data = client.get_futures_candles(coin_sym, interval="1m", limit=5)
+            if c_1m_data and len(c_1m_data) >= 2:
+                l1 = c_1m_data[0]
+                c_1m = "GREEN" if l1["close"] >= l1["open"] else "RED"
+            else:
+                c_1m = c_5m
+        except Exception:
+            c_1m = c_5m
 
         tf_results = {"1m": c_1m, "5m": c_5m, "15m": c_15m, "1h": c_1h_trend, "1d": c_1d}
         greens = sum(1 for v in tf_results.values() if v == "GREEN")
         reds = sum(1 for v in tf_results.values() if v == "RED")
 
+        # Require strict confluence: at least 4 out of 5 timeframes must agree!
         if greens >= 4:
             consensus = "UP"
             agreement = greens
         elif reds >= 4:
-            consensus = "DOWN"
-            agreement = reds
-        elif greens >= 3:
-            consensus = "UP"
-            agreement = greens
-        elif reds >= 3:
             consensus = "DOWN"
             agreement = reds
         else:
@@ -449,16 +469,15 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
 
         c_up = coin_sym.upper()
         if c_up in ["BTC", "WBTC"]:
-            lev = 22 if agreement >= 4 else 20
+            lev = 10 if agreement >= 4 else 8
         elif c_up == "ETH":
-            lev = 12 if agreement >= 4 else 10
-        elif abs(chg_24h) >= 10.0:  # High-Beta volatile altcoin (>10% daily range) -> Safe 4x-5x leverage
-            lev = getattr(config, "MAX_HIGH_BETA_LEVERAGE", 5)
-        else: # Standard altcoin
-            max_mid = getattr(config, "MAX_MID_BETA_LEVERAGE", 7)
-            lev = min(max_mid, 7 if agreement == 5 else (6 if agreement == 4 else 5))
+            lev = 8 if agreement >= 4 else 6
+        elif abs(chg_24h) >= 10.0:  # High-Beta volatile altcoin -> Safe 3x leverage
+            lev = getattr(config, "MAX_HIGH_BETA_LEVERAGE", 3)
+        else: # Standard altcoin -> Safe 4x leverage
+            lev = getattr(config, "MAX_MID_BETA_LEVERAGE", 4)
 
-        boost = 10 if agreement == 5 else (6 if agreement == 4 else 2)
+        boost = 10 if agreement == 5 else (6 if agreement == 4 else 0)
 
         return {
             "consensus": consensus,

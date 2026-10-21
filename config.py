@@ -42,21 +42,27 @@ MAX_DAILY_LOSS_LIMIT = 1500.0          # 5% of wallet. If hit, bot stops trading
 DAILY_PROFIT_GOAL = 2000.0             # Daily target goal (+₹2,000 net). When reached, lock in profits
 RISK_REWARD_RATIO = 2.0                # Strict 1:2 Asymmetric R:R (Every $1 risked targets $2 profit)
 
-# Asymmetric Leverage Caps (Prevents flash-crash liquidations)
+# Asymmetric Leverage Caps (Prevents flash-crash liquidations & wick stop-outs)
 LEVERAGE_BTC_ETH = 10                  # Safe 10x max for BTC/ETH (~9.5% liquidation buffer)
-LEVERAGE_ALTS = 4                      # Safe 4x max for Altcoins (absorbs sharp 8-12% crypto wicks)
+LEVERAGE_ALTS = 4                      # Safe 4x max for Altcoins (gives safe 3.5% - 5.0% breathing room)
+
+# Strict Stablecoin Blacklist (Never trade pegged tokens or fiat mirrors)
+STABLECOIN_BLACKLIST = {
+    "USDT", "USDC", "FDUSD", "TUSD", "BUSD", "DAI", "USDP", "EUR", "AEUR",
+    "WBETH", "BTCST", "EURS", "USTC", "FRAX", "PYUSD", "USDD", "GUSD"
+}
 
 RISK_PROFILES = {
     "USER_MIRROR": {
         "label": "Asymmetric 1:2 Trend Breakout (Turtle & SMC)",
         "leverage_btc": (8, 10),
         "leverage_eth": (8, 10),
-        "leverage_alts": (4, 5),
+        "leverage_alts": (3, 4),
         "investment_inr": 2500.0,
-        "min_confidence": 84,
-        "stop_loss_pct": 1.5,
-        "take_profit_pct": 3.0,        # Exact 1:2 R:R (1.5% SL vs 3.0% TP)
-        "target_profit_min_inr": 150.0,
+        "min_confidence": 85,
+        "stop_loss_pct": 3.5,          # Safe 3.5% SL buffer (never stopped out by 1m micro-wicks)
+        "take_profit_pct": 7.0,        # Exact 1:2 R:R (3.5% SL vs 7.0% TP)
+        "target_profit_min_inr": 175.0,
         "target_profit_max_inr": 500.0,
         "front_run_ratio": 0.85,
         "margin_defense_drawdown_pct": -48.0,
@@ -158,14 +164,14 @@ RSI_LONG_MAX = 65.0                   # Max RSI for LONG (never buy overbought t
 RSI_SHORT_MIN = 35.0                  # Min RSI for SHORT (never short into oversold bounce traps)
 RSI_SHORT_MAX = 62.0                  # Maximum momentum for SHORT
 
-# 4. Volatility-Adaptive Leverage (ATR / Beta Scaling)
-MAX_HIGH_BETA_LEVERAGE = 5            # Cap wild altcoins (>10% daily swing) at 5x leverage
-MAX_MID_BETA_LEVERAGE = 7             # Cap standard altcoins at 7x leverage
+# 4. Volatility-Adaptive Leverage (Safe 3x - 4x Caps to prevent wick stop-outs)
+MAX_HIGH_BETA_LEVERAGE = 3            # Cap wild altcoins (>10% daily swing) at safe 3x leverage
+MAX_MID_BETA_LEVERAGE = 4             # Cap standard altcoins at safe 4x leverage
 
 # Trade settings (Active defaults derived from CURRENT_RISK_MODE)
-LEVERAGE = 8  # Dynamic fallback
+LEVERAGE = 4  # Dynamic safe fallback
 SAME_COIN_COOLDOWN_SECONDS = 7200  # 2 hours cooldown before re-trading the same coin
-POST_LOSS_COOLDOWN_SECONDS = 1800  # 30-min anti-whipsaw cooldown after a loss/stop-out
+POST_LOSS_COOLDOWN_SECONDS = 2700  # 45-min anti-whipsaw cooldown after a loss/stop-out
 
 # Dynamic Adaptive Runner Settings (Rare Parabolic Breakouts +25% to +45%)
 RUNNER_TRIGGER_PNL_PCT = 14.0  # When trade hits +14% PnL, shift TP to mega runner mode
@@ -174,7 +180,7 @@ RUNNER_LOCK_PROFIT_PCT = 10.5  # Lock at least +10.5% guaranteed net profit
 RUNNER_TRAILING_BUFFER_PCT = 8.0 # Trail 8% below peak PnL for runners
 
 # Anti-Ghost Coin & Institutional Liquidity Safeguards
-MIN_LIQUIDITY_USDT = 3_000_000.0   # Minimum $3M USDT 24h volume (eliminates illiquid ghost coins & fatal slippage)
+MIN_LIQUIDITY_USDT = 5_000_000.0   # Minimum $5M USDT 24h volume (eliminates illiquid ghost coins & fatal slippage)
 MAX_24H_VOLATILITY_PCT = 35.0      # Anti-pump-and-dump: blocks unnatural extreme spike coins (>35% or <-35%)
 FILTER_EXIT_ONLY_CONTRACTS = True  # Automatically blacklist non-trading, delisted, and exit-only contracts
 

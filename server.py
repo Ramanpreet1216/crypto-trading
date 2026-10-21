@@ -957,6 +957,10 @@ def bot_worker():
 
                             c_coin = candidate["coin"]
                             c_pair = f"B-{c_coin}_USDT"
+                            # 0. STABLECOIN & PEGGED TOKEN FILTER:
+                            if c_coin in getattr(config, "STABLECOIN_BLACKLIST", set()):
+                                continue
+
                             c_dir = candidate.get("direction", "UP").upper()
                             pos_dir = "LONG" if c_dir == "UP" else "SHORT"
 
@@ -1055,25 +1059,26 @@ def bot_worker():
 
                                 pred_target = float(candidate.get("target_price", 0) or 0)
                                 if is_turtle_mode and turtle_sl:
-                                    # Strict 1:2 Risk-to-Reward Ratio (Reward = 2 x Risk distance)
-                                    risk_dist = max(live_p * 0.008, abs(live_p - turtle_sl))
+                                    # Strict 1:2 Risk-to-Reward Ratio (Reward = 2 x Risk distance) with Safe Min 3.5% Buffer
+                                    min_sl_dist = live_p * (float(getattr(config, "STOP_LOSS_PERCENT", 3.5)) / 100.0)
+                                    risk_dist = max(min_sl_dist, abs(live_p - turtle_sl))
                                     if pos_dir == "LONG":
                                         target_price = round(live_p + (risk_dist * 2.0), precision)
-                                        stop_loss = round(turtle_sl, precision)
+                                        stop_loss = round(min(live_p - min_sl_dist, turtle_sl), precision)
                                     else:
                                         target_price = round(live_p - (risk_dist * 2.0), precision)
-                                        stop_loss = round(turtle_sl, precision)
+                                        stop_loss = round(max(live_p + min_sl_dist, turtle_sl), precision)
                                 elif pred_target > 0 and ((pos_dir == "LONG" and pred_target > live_p) or (pos_dir == "SHORT" and pred_target < live_p)):
                                     predicted_move_pct = abs((pred_target - live_p) / live_p) * 100.0
                                     capped_move_pct = min(target_move_pct, predicted_move_pct * front_run)
                                     target_price = round(live_p * (1.0 + (capped_move_pct / 100.0)), precision) if pos_dir == "LONG" else round(live_p * (1.0 - (capped_move_pct / 100.0)), precision)
-                                    stop_loss = round(live_p * 0.985, precision) if pos_dir == "LONG" else round(live_p * 1.015, precision)
+                                    stop_loss = round(live_p * (1.0 - min_sl_pct), precision) if pos_dir == "LONG" else round(live_p * (1.0 + min_sl_pct), precision)
                                 elif pos_dir == "LONG":
                                     target_price = round(live_p * (1.0 + (target_move_pct / 100.0)), precision)
-                                    stop_loss = round(live_p * 0.985, precision)
+                                    stop_loss = round(live_p * (1.0 - min_sl_pct), precision)
                                 else:
                                     target_price = round(live_p * (1.0 - (target_move_pct / 100.0)), precision)
-                                    stop_loss = round(live_p * 1.015, precision)
+                                    stop_loss = round(live_p * (1.0 + min_sl_pct), precision)
 
                                 # Breathing room with -48% Margin Defense
                                 defense_ratio = abs(float(getattr(config, "MARGIN_DEFENSE_DRAWDOWN_PCT", -48.0))) / 100.0
