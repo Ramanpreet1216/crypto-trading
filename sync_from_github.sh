@@ -39,4 +39,6 @@ if [ -n "$LOCAL" ] && [ -n "$REMOTE" ] && [ "$LOCAL" != "$REMOTE" ]; then
     fi
 
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Bot updated and successfully running on port 5000!"
+else
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Server is already 100% up to date (${LOCAL:0:7}). Standing by for new GitHub commits."
 fi
