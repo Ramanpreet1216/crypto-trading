@@ -19,7 +19,8 @@ REMOTE=$(git rev-parse origin/$BRANCH 2>/dev/null)
 if [ -n "$LOCAL" ] && [ -n "$REMOTE" ] && [ "$LOCAL" != "$REMOTE" ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] New update detected on GitHub ($LOCAL -> $REMOTE)!"
     
-    # Reset and pull latest code
+    # Discard any local file modifications (e.g. paper_trades.json cache) so pull never fails
+    git checkout -- paper_trades.json 2>/dev/null || true
     git reset --hard origin/$BRANCH
     
     # Install any new dependencies if requirements.txt changed
@@ -27,16 +28,14 @@ if [ -n "$LOCAL" ] && [ -n "$REMOTE" ] && [ "$LOCAL" != "$REMOTE" ]; then
         pip install --no-cache-dir -r requirements.txt --quiet 2>/dev/null || pip3 install --no-cache-dir -r requirements.txt --quiet 2>/dev/null
     fi
 
-    # Restart server.py process
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Restarting server.py..."
-    pkill -9 -f "server.py" 2>/dev/null
-    sleep 1
-
-    # Restart in background
-    if command -v python3 >/dev/null 2>&1; then
-        nohup python3 server.py > server.log 2>&1 &
+    # Restart bot using systemd tradingbot.service if available, else process restart
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Restarting trading bot..."
+    if systemctl list-unit-files 2>/dev/null | grep -q "tradingbot.service"; then
+        sudo systemctl restart tradingbot
     else
-        nohup python server.py > server.log 2>&1 &
+        pkill -9 -f "server.py" 2>/dev/null
+        sleep 1
+        nohup python3 server.py > server.log 2>&1 &
     fi
 
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Bot updated and successfully running on port 5000!"
