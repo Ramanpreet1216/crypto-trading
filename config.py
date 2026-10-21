@@ -184,6 +184,12 @@ MIN_LIQUIDITY_USDT = 5_000_000.0   # Minimum $5M USDT 24h volume (eliminates ill
 MAX_24H_VOLATILITY_PCT = 35.0      # Anti-pump-and-dump: blocks unnatural extreme spike coins (>35% or <-35%)
 FILTER_EXIT_ONLY_CONTRACTS = True  # Automatically blacklist non-trading, delisted, and exit-only contracts
 
+# Breakout Quality & Market Regime Filters (Anti-Fakeout & Anti-Chop Shields)
+MIN_VOLUME_SURGE_RATIO = 1.25      # Breakout candle must have >= 1.25x (125%) 20-bar avg volume
+MIN_ADX_TREND_STRENGTH = 20.0      # Minimum ADX (>= 20) confirming real trend vs sideways chop
+REQUIRE_VOLUME_CONFIRMATION = True # Reject breakout if volume is weak/dry
+REQUIRE_TREND_STRENGTH = True      # Reject breakout if market is consolidating/sideways
+
 # ==============================================================================
 # STRATEGY SELECTION
 # ==============================================================================

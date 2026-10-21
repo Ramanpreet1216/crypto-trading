@@ -67,6 +67,27 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     rs = avg_gain / (avg_loss + 1e-9)
     df["rsi"] = 100.0 - (100.0 / (1.0 + rs))
 
+    # --------------------------------------------------------------------------
+    # 4. VOLUME SURGE RATIO & TREND STRENGTH (ADX)
+    # --------------------------------------------------------------------------
+    if "volume" in df.columns:
+        vol_col = pd.to_numeric(df["volume"], errors="coerce").fillna(0.0)
+        df["vol_sma20"] = vol_col.rolling(window=20, min_periods=1).mean()
+        df["vol_surge_ratio"] = (vol_col / (df["vol_sma20"] + 1e-9)).fillna(1.0)
+    else:
+        df["vol_surge_ratio"] = 1.0
+
+    # Welles Wilder Average Directional Index (ADX) - Trend Strength vs Chop
+    up_move = df["high"] - df["high"].shift(1)
+    down_move = df["low"].shift(1) - df["low"]
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+    atr_14 = tr.ewm(alpha=1.0 / 14, min_periods=1, adjust=False).mean()
+    plus_di = 100.0 * (pd.Series(plus_dm, index=df.index).ewm(alpha=1.0 / 14, min_periods=1, adjust=False).mean() / (atr_14 + 1e-9))
+    minus_di = 100.0 * (pd.Series(minus_dm, index=df.index).ewm(alpha=1.0 / 14, min_periods=1, adjust=False).mean() / (atr_14 + 1e-9))
+    dx = 100.0 * ((plus_di - minus_di).abs() / (plus_di + minus_di + 1e-9))
+    df["adx"] = dx.ewm(alpha=1.0 / 14, min_periods=1, adjust=False).mean().fillna(25.0)
+
     return df
 
 
@@ -189,7 +210,19 @@ def evaluate_signal(
     is_breakout = current_price > donchian_high
 
     if is_breakout:
-        reason = f"Turtle 1:2 Breakout Entry! Close ({current_price:,.2f}) > 55-bar High ({donchian_high:,.2f}) | 1R SL: {turtle_stop_price:,.2f}, +2R TP: {turtle_tp_price:,.2f} (N: {n_val:,.2f})"
+        # 1. Volume Surge Confirmation Filter (Anti-Fakeout Shield)
+        vol_surge = float(latest.get("vol_surge_ratio", 1.0))
+        min_vol_surge = float(getattr(config, "MIN_VOLUME_SURGE_RATIO", 1.25))
+        if getattr(config, "REQUIRE_VOLUME_CONFIRMATION", True) and vol_surge < min_vol_surge:
+            return "HOLD", f"Breakout detected but rejected: Weak volume surge ({vol_surge:.2f}x < {min_vol_surge:.2f}x required). Avoiding fakeout trap.", metrics
+
+        # 2. Market Regime & Trend Strength Filter (ADX vs Chop Shield)
+        adx_val = float(latest.get("adx", 25.0))
+        min_adx = float(getattr(config, "MIN_ADX_TREND_STRENGTH", 20.0))
+        if getattr(config, "REQUIRE_TREND_STRENGTH", True) and adx_val < min_adx:
+            return "HOLD", f"Breakout detected but rejected: Market is choppy/consolidating (ADX {adx_val:.1f} < {min_adx:.1f}). Standing down.", metrics
+
+        reason = f"Turtle 1:2 Breakout Entry! Close ({current_price:,.2f}) > 55-bar High ({donchian_high:,.2f}) | Vol: {vol_surge:.2f}x surge, ADX: {adx_val:.1f} | 1R SL: {turtle_stop_price:,.2f}, +2R TP: {turtle_tp_price:,.2f}"
         return "BUY", reason, metrics
 
     return "HOLD", f"Waiting for 1:2 Turtle Breakout (55-High: {donchian_high:,.2f}, 55-Low: {donchian_low:,.2f}, N: {n_val:,.2f})", metrics
