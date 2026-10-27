@@ -1969,8 +1969,8 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
 
         elif path == "/api/paper_trades/clear":
             try:
-                start_wal = getattr(config, "STARTING_WALLET_INR", 3006.0)
-                max_s = getattr(config, "MAX_OPEN_POSITIONS", 5)
+                start_wal = float(getattr(config, "STARTING_WALLET_INR", 30000.0))
+                max_s = int(getattr(config, "MAX_OPEN_POSITIONS", 2))
                 payload = {
                     "updated_at": get_ist_now().isoformat(),
                     "paper_balance": start_wal,
@@ -1985,6 +1985,7 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
                     },
                     "trades": [],
                     "is_running": True,
+                    "allow_new_trades": True,
                     "active_positions": [],
                     "active_position": None
                 }
@@ -1996,6 +1997,8 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
                 bot_state["paper_balance"] = start_wal
                 bot_state["starting_balance"] = start_wal
                 bot_state["max_slots"] = max_s
+                bot_state["is_running"] = True
+                bot_state["allow_new_trades"] = True
                 bot_state["performance_summary"] = payload["summary"]
                 bot_state["last_signal"] = "FRESH RESTART"
                 bot_state["last_reason"] = f"Wallet reset to INR {start_wal:,.2f}. Scanning 700+ coins across {max_s} fresh slots..."
