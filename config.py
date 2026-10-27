@@ -46,11 +46,14 @@ RISK_REWARD_RATIO = 2.0                # Strict 1:2 Asymmetric R:R (Every $1 ris
 LEVERAGE_BTC_ETH = 10                  # Safe 10x max for BTC/ETH (~9.5% liquidation buffer)
 LEVERAGE_ALTS = 4                      # Safe 4x max for Altcoins (gives safe 3.5% - 5.0% breathing room)
 
-# Strict Stablecoin Blacklist (Never trade pegged tokens or fiat mirrors)
+# Strict Stablecoin & Synthetic Asset Blacklist (Never trade pegged tokens or fiat mirrors)
 STABLECOIN_BLACKLIST = {
     "USDT", "USDC", "FDUSD", "TUSD", "BUSD", "DAI", "USDP", "EUR", "AEUR",
-    "WBETH", "BTCST", "EURS", "USTC", "FRAX", "PYUSD", "USDD", "GUSD"
+    "WBETH", "BTCST", "EURS", "USTC", "FRAX", "PYUSD", "USDD", "GUSD",
+    "USD1", "RLUSD", "U", "USDE", "USDJ", "SUSD", "XAUT", "PAXG"
 }
+STABLECOIN_PRICE_MIN = 0.96
+STABLECOIN_PRICE_MAX = 1.04
 
 RISK_PROFILES = {
     "USER_MIRROR": {
@@ -59,18 +62,18 @@ RISK_PROFILES = {
         "leverage_eth": (8, 10),
         "leverage_alts": (3, 4),
         "investment_inr": 2500.0,
-        "min_confidence": 85,
-        "stop_loss_pct": 3.5,          # Safe 3.5% SL buffer (never stopped out by 1m micro-wicks)
-        "take_profit_pct": 7.0,        # Exact 1:2 R:R (3.5% SL vs 7.0% TP)
-        "target_profit_min_inr": 175.0,
-        "target_profit_max_inr": 500.0,
+        "min_confidence": 86,          # Calibrated for 4 to 5 high-conviction trades per day
+        "stop_loss_pct": 3.0,          # Tight 3.0% SL buffer (max ₹90 - ₹120 net loss)
+        "take_profit_pct": 6.5,        # 1:2.2 R:R (6.5% spot target = +26% on 4x = +₹430 net profit)
+        "target_profit_min_inr": 280.0,
+        "target_profit_max_inr": 600.0,
         "front_run_ratio": 0.85,
         "margin_defense_drawdown_pct": -48.0,
         "margin_defense_topup_ratio": 0.50,
         "hard_stop_loss_margin_pct": -58.0,
         "post_loss_cooldown_seconds": 1800,  # 30-min cooldown after a stop-loss
         "timeframe": "15m",
-        "description": "Strict 1:2 Asymmetric R:R (4x-5x Alts, ₹2,500 sizing, 1:2 Profit Target, 2-Slot Cap)."
+        "description": "Strict 1:2 Asymmetric R:R (4x Alts, ₹2,500 sizing, 4-5 High-Conviction Trades/Day, 2-Slot Cap)."
     },
     "SAFE": {
         "label": "Safe Mode (25-35% Monthly)",
@@ -115,31 +118,25 @@ MARGIN_DEFENSE_DRAWDOWN_PCT = -48.0  # At -48% drawdown (~6.5% spot drop), check
 MARGIN_DEFENSE_TOPUP_RATIO = 0.50    # Top up 50% margin to de-leverage (e.g. 8x -> 5.3x) and absorb drawdown
 HARD_STOP_LOSS_MARGIN_PCT = -58.0    # Final hard stop barrier (~8% spot drop) to prevent deep losses
 
-# Target Profit Settings: Dynamic +6.8% - +14.0% Scalp Take-Profit (₹350 - ₹850 Net Profit per trade)
-TARGET_PROFIT_MIN_INR = 350.0         # ₹350 minimum profit per trade (calibrated for ₹6,000 margin)
-TARGET_PROFIT_MAX_INR = 850.0         # ₹850 maximum target profit for high-conviction breakout setups
-TARGET_PROFIT_ROI_PCT = 6.8          # +6.8% Baseline Target ROI on margin
-FRONT_RUN_RATIO = 0.75               # Front-run predicted target at 75% distance to guarantee fill
+# Target Profit Settings: Dynamic +22.0% Take-Profit (~₹400 - ₹650 Net Profit per trade)
+TARGET_PROFIT_MIN_INR = 280.0         # ₹280 minimum net profit per trade
+TARGET_PROFIT_MAX_INR = 650.0         # ₹650 maximum target profit for breakout runners
+TARGET_PROFIT_ROI_PCT = 22.0          # +22.0% Baseline Target ROI on margin (~5.5% spot move at 4x)
+FRONT_RUN_RATIO = 0.85                # Front-run predicted target at 85% distance to guarantee fill
 
-# Capital Opportunity Rotation Settings (When 5 slots are full)
-CAPITAL_ROTATION_ENABLED = True
-ROTATION_MIN_PROFIT_PCT = 5.5        # Existing position must have at least +5.5% ROI to be rotated
-ROTATION_CANDIDATE_MIN_CONF = 84     # New candidate must have >= 84% confidence
-ROTATION_CANDIDATE_MIN_MTF = 4       # 4/5 or 5/5 MTF agreement
+# Capital Opportunity Rotation Settings (DISABLED to let winners run to full target!)
+CAPITAL_ROTATION_ENABLED = False
+ROTATION_MIN_PROFIT_PCT = 18.0        # Disabled
+ROTATION_CANDIDATE_MIN_CONF = 88      # 88% min confidence
+ROTATION_CANDIDATE_MIN_MTF = 4        # 4/5 or 5/5 MTF agreement
 
-# Unified Multi-Stage Trailing Profit Staircase (95% Quick Scalps + Rare Parabolic Mega-Runners):
+# Unified Multi-Stage Trailing Profit Staircase (Guarantees net profit after Indian TDS & fees):
 TRAILING_PROFIT_STAIRCASE = [
-    (45.0, 35.0), # At +45% ROI -> Lock +35.0% profit (~₹122 net profit on ₹350 margin!)
-    (35.0, 25.0), # At +35% ROI -> Lock +25.0% profit (~₹87 net profit)
-    (30.0, 20.0), # At +30% ROI -> Lock +20.0% profit (~₹70 net profit) [17-22% gain SL requested by user!]
-    (25.0, 17.0), # At +25% ROI -> Lock +17.0% profit (~₹59 net profit)
-    (20.0, 14.0), # At +20% ROI -> Lock +14.0% profit (~₹49 net profit)
-    (14.0, 10.5), # At +14% ROI -> Lock +10.5% profit (~₹37 net profit)
-    (12.0, 8.5),  # At +12% ROI -> Lock +8.5% profit (~₹30 net profit)
-    (8.0, 6.0),   # At +8.0% ROI -> Lock +6.0% profit (~₹21 net profit)
-    (6.5, 4.8),   # At +6.5% ROI -> Lock +4.8% profit (~₹17 net profit)
-    (5.5, 3.8),   # At +5.5% ROI -> Lock +3.8% profit (~₹13 net profit)
-    (4.0, 1.5),   # At +4.0% ROI -> Lock +1.5% profit (cushion for fees & TDS, guaranteed no-loss)
+    (40.0, 30.0), # At +40% ROI -> Lock +30.0% profit (~₹500 net profit)
+    (30.0, 22.0), # At +30% ROI -> Lock +22.0% profit (~₹350 net profit)
+    (22.0, 15.0), # At +22% ROI -> Lock +15.0% profit (~₹240 net profit)
+    (15.0, 10.0), # At +15% ROI -> Lock +10.0% profit (~₹160 net profit)
+    (10.0, 6.0),  # At +10% ROI -> Lock +6.0% profit (~₹100 net profit, guaranteed green after TDS/fees)
 ]
 
 # ==============================================================================

@@ -1,0 +1,47 @@
+[
+  {
+    "title": "Unemployment Claims",
+    "country": "USD",
+    "impact": "Medium",
+    "timestamp": 1792672200.0,
+    "iso_date": "2026-10-22T08:30:00-04:00",
+    "forecast": "200K",
+    "previous": "199K"
+  },
+  {
+    "title": "Flash Manufacturing PMI",
+    "country": "USD",
+    "impact": "Medium",
+    "timestamp": 1792763100.0,
+    "iso_date": "2026-10-23T09:45:00-04:00",
+    "forecast": "55.4",
+    "previous": "57.0"
+  },
+  {
+    "title": "Flash Services PMI",
+    "country": "USD",
+    "impact": "Medium",
+    "timestamp": 1792763100.0,
+    "iso_date": "2026-10-23T09:45:00-04:00",
+    "forecast": "57.9",
+    "previous": "58.7"
+  },
+  {
+    "title": "Revised UoM Consumer Sentiment",
+    "country": "USD",
+    "impact": "Medium",
+    "timestamp": 1792764000.0,
+    "iso_date": "2026-10-23T10:00:00-04:00",
+    "forecast": "46.3",
+    "previous": "46.3"
+  },
+  {
+    "title": "Revised UoM Inflation Expectations",
+    "country": "USD",
+    "impact": "Medium",
+    "timestamp": 1792764000.0,
+    "iso_date": "2026-10-23T10:00:00-04:00",
+    "forecast": "",
+    "previous": "4.7%"
+  }
+]

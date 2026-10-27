@@ -362,9 +362,23 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     # Excludes stablecoins, fiat mirrors, and extreme unnatural pump-and-dump spikes (>35% or <-35%).
     min_vol = getattr(config, "MIN_LIQUIDITY_USDT", 5_000_000.0)
     max_volatility = getattr(config, "MAX_24H_VOLATILITY_PCT", 35.0)
-    stable_blacklist = getattr(config, "STABLECOIN_BLACKLIST", {
+    stable_blacklist = set(getattr(config, "STABLECOIN_BLACKLIST", {
         "USDT", "USDC", "FDUSD", "TUSD", "BUSD", "DAI", "USDP", "EUR", "AEUR"
-    })
+    }))
+    peg_min = getattr(config, "STABLECOIN_PRICE_MIN", 0.96)
+    peg_max = getattr(config, "STABLECOIN_PRICE_MAX", 1.04)
+
+    def is_peg_or_stable(t_item: dict) -> bool:
+        sym = t_item.get("symbol", "").replace("USDT", "")
+        if sym in stable_blacklist:
+            return True
+        try:
+            lp = float(t_item.get("lastPrice", 0) or 0)
+            if peg_min <= lp <= peg_max:
+                return True
+        except (ValueError, TypeError):
+            pass
+        return False
 
     usdt_pairs = [
         t for t in tickers 
@@ -373,7 +387,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
         and float(t.get("quoteVolume", 0) or 0) >= min_vol
         and abs(float(t.get("priceChangePercent", 0))) <= max_volatility
         and t.get("symbol", "").replace("USDT", "") not in exit_only_set
-        and t.get("symbol", "").replace("USDT", "") not in stable_blacklist
+        and not is_peg_or_stable(t)
     ]
     if not usdt_pairs:
         # Fallback to top volume liquid pairs if volume was unusually high
@@ -382,7 +396,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
             if t.get("symbol", "").endswith("USDT") 
             and t.get("priceChangePercent")
             and t.get("symbol", "").replace("USDT", "") not in exit_only_set
-            and t.get("symbol", "").replace("USDT", "") not in stable_blacklist
+            and not is_peg_or_stable(t)
         ]
         usdt_pairs = sorted(usdt_pairs, key=lambda x: float(x.get("quoteVolume", 0) or 0), reverse=True)[:35]
         if not usdt_pairs:
@@ -397,9 +411,8 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     seen = set()
 
     for pool in [usdt_pairs_sorted_gain[:15], usdt_pairs_sorted_vol[:20], usdt_pairs_sorted_loss[:15]]:
-        for item in pool:
             sym = item.get("symbol", "").replace("USDT", "")
-            if sym.isascii() and sym.isalnum() and sym not in seen and sym not in stable_blacklist:
+            if sym.isascii() and sym.isalnum() and sym not in seen and not is_peg_or_stable(item):
                 seen.add(sym)
                 candidate_symbols.append((sym, float(item.get("priceChangePercent", 0)), float(item.get("quoteVolume", 0))))
 
@@ -499,7 +512,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
                 return None
 
             mtf = evaluate_coin_multi_timeframe(coin, chg_24h, candles)
-            if mtf["consensus"] == "MIXED" or mtf["agreement"] < 3:
+            if mtf["consensus"] == "MIXED" or mtf["agreement"] < 4:
                 return None
 
             dir_match = mtf["consensus"]
@@ -523,7 +536,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
             raw_prob = pred.get("probability", 50)
             prob = min(96, raw_prob + mtf.get("confidence_boost", 2))
 
-            effective_min_conf = min(min_confidence, 80)
+            effective_min_conf = int(min_confidence or 86)
             if prob < effective_min_conf:
                 return None
             if direction != "ALL" and dir_match != direction.upper():

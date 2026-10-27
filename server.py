@@ -727,12 +727,13 @@ def bot_worker():
                         target_roi = float(getattr(config, "TARGET_PROFIT_ROI_PCT", 6.8))
                         max_tp_inr = float(getattr(config, "TARGET_PROFIT_MAX_INR", 50.0))
 
-                        # Only trigger standard take-profit if Net PnL is positive (after all fees & TDS)
+                        # Only trigger standard take-profit if Net PnL is positive and meets minimum net profit goal (after all fees & TDS)
+                        min_net_goal = float(getattr(config, "TARGET_PROFIT_MIN_INR", 280.0))
                         if pos_dir == "LONG":
                             if target_p and current_price >= target_p and net_pnl > 0:
                                 runner_note = f" [Runner Target +{pos.get('runner_target_pct', 35)}% Hit!]" if pos.get("is_runner") else ""
                                 exit_trigger = f"Target Hit (${target_p:.4f}){runner_note} [Net ₹{net_pnl:+.2f}]!"
-                            elif not pos.get("is_runner") and net_pnl >= 25.0 and (gross_pnl >= max_tp_inr or gross_pnl_pct >= target_roi):
+                            elif not pos.get("is_runner") and net_pnl >= min_net_goal and (gross_pnl >= max_tp_inr or gross_pnl_pct >= target_roi):
                                 exit_trigger = f"Target Reached (+₹{gross_pnl:.2f} / +{gross_pnl_pct:.1f}% ROI | Net ₹{net_pnl:+.2f})!"
                             elif active_sl and current_price <= active_sl:
                                 is_profit = active_sl > buy_price
@@ -742,7 +743,7 @@ def bot_worker():
                             if target_p and current_price <= target_p and net_pnl > 0:
                                 runner_note = f" [Runner Target +{pos.get('runner_target_pct', 35)}% Hit!]" if pos.get("is_runner") else ""
                                 exit_trigger = f"Target Hit (${target_p:.4f}){runner_note} [Net ₹{net_pnl:+.2f}]!"
-                            elif not pos.get("is_runner") and net_pnl >= 25.0 and (gross_pnl >= max_tp_inr or gross_pnl_pct >= target_roi):
+                            elif not pos.get("is_runner") and net_pnl >= min_net_goal and (gross_pnl >= max_tp_inr or gross_pnl_pct >= target_roi):
                                 exit_trigger = f"Target Reached (+₹{gross_pnl:.2f} / +{gross_pnl_pct:.1f}% ROI | Net ₹{net_pnl:+.2f})!"
                             elif active_sl and current_price >= active_sl:
                                 is_profit = active_sl < buy_price
@@ -958,7 +959,8 @@ def bot_worker():
                             c_coin = candidate["coin"]
                             c_pair = f"B-{c_coin}_USDT"
                             # 0. STABLECOIN & PEGGED TOKEN FILTER:
-                            if c_coin in getattr(config, "STABLECOIN_BLACKLIST", set()):
+                            c_last_price = float(candidate.get("current_price", 0) or 0)
+                            if 0.96 <= c_last_price <= 1.04 or c_coin in getattr(config, "STABLECOIN_BLACKLIST", set()):
                                 continue
 
                             c_dir = candidate.get("direction", "UP").upper()
