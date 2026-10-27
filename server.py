@@ -1544,19 +1544,28 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
 
         # API: Candle Data for Chart (Supports 1m, 5m, 15m, 1h, 1d) with 5s cache
         elif path == "/api/candles":
-            pair = query.get("pair", ["B-BTC_USDT"])[0]
-            interval = query.get("interval", ["1h"])[0]
+            pair = query.get("pair", ["B-BTC_USDT"])[0].upper().strip()
+            interval = query.get("interval", ["1h"])[0].lower().strip()
+            if interval in ["d", "1day"]:
+                interval = "1d"
+            elif interval in ["5min"]:
+                interval = "5m"
+            elif interval in ["15min"]:
+                interval = "15m"
+            elif interval in ["1min"]:
+                interval = "1m"
             limit = int(query.get("limit", ["60"])[0])
 
             now_c = time.time()
             c_key = (pair, interval, limit)
             cached_c = _CANDLES_CACHE.get(c_key)
-            if cached_c and (now_c - cached_c["timestamp"]) < 5.0:
+            if cached_c and (now_c - cached_c["timestamp"]) < 4.0:
                 candles = cached_c["data"]
             else:
                 client = CoinDCXClient()
                 candles = client.get_raw_candles(pair=pair, interval=interval, limit=limit)
-                _CANDLES_CACHE[c_key] = {"data": candles, "timestamp": now_c}
+                if candles and len(candles) > 0:
+                    _CANDLES_CACHE[c_key] = {"data": candles, "timestamp": now_c}
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

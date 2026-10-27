@@ -97,11 +97,37 @@ class CoinDCXClient:
         elif tf not in ["1m", "5m", "15m", "1h", "1d"]:
             tf = "1h"
 
-        # 1. Primary: CoinDCX Official Public Candles
+        # 1. Handle 5m interval specially (CoinDCX API natively only supports [1m, 15m, 1h, 1d])
+        if tf == "5m":
+            # Primary for 5m: Binance Futures (fastest 5m klines)
+            try:
+                url = "https://fapi.binance.com/fapi/v1/klines"
+                params = {"symbol": futures_symbol, "interval": "5m", "limit": limit}
+                res = requests.get(url, params=params, headers=self.PUBLIC_HEADERS, timeout=2.5)
+                if res.status_code == 200:
+                    raw = res.json()
+                    if isinstance(raw, list) and len(raw) > 0:
+                        candles = []
+                        for c in reversed(raw):
+                            candles.append({
+                                "open": float(c[1]),
+                                "high": float(c[2]),
+                                "low": float(c[3]),
+                                "close": float(c[4]),
+                                "volume": float(c[5]),
+                                "time": int(c[0])
+                            })
+                        return candles
+            except Exception:
+                pass
+            # Secondary for 5m: Resample CoinDCX 1m candles into 5m
+            return self.get_spot_raw_candles(pair=f"B-{clean}_USDT", interval="5m", limit=limit)
+
+        # 2. For 1m, 15m, 1h, 1d: Primary is CoinDCX Official Public Candles
         try:
             url = f"{self.PUBLIC_URL}/market_data/candles"
             params = {"pair": f"B-{clean}_USDT", "interval": tf, "limit": limit}
-            res = requests.get(url, params=params, headers=self.PUBLIC_HEADERS, timeout=3)
+            res = requests.get(url, params=params, headers=self.PUBLIC_HEADERS, timeout=2.5)
             if res.status_code == 200:
                 raw = res.json()
                 if isinstance(raw, list) and len(raw) > 0:
@@ -119,28 +145,29 @@ class CoinDCXClient:
         except Exception:
             pass
 
-        # 2. Secondary fallback: Binance Futures
+        # 3. Secondary fallback: Binance Futures
         try:
             url = "https://fapi.binance.com/fapi/v1/klines"
             params = {"symbol": futures_symbol, "interval": tf, "limit": limit}
-            res = requests.get(url, params=params, headers=self.PUBLIC_HEADERS, timeout=3)
+            res = requests.get(url, params=params, headers=self.PUBLIC_HEADERS, timeout=2.5)
             if res.status_code == 200:
                 raw = res.json()
-                candles = []
-                for c in reversed(raw): # newest first
-                    candles.append({
-                        "open": float(c[1]),
-                        "high": float(c[2]),
-                        "low": float(c[3]),
-                        "close": float(c[4]),
-                        "volume": float(c[5]),
-                        "time": int(c[0])
-                    })
-                return candles
+                if isinstance(raw, list) and len(raw) > 0:
+                    candles = []
+                    for c in reversed(raw): # newest first
+                        candles.append({
+                            "open": float(c[1]),
+                            "high": float(c[2]),
+                            "low": float(c[3]),
+                            "close": float(c[4]),
+                            "volume": float(c[5]),
+                            "time": int(c[0])
+                        })
+                    return candles
         except Exception:
             pass
 
-        # Fallback to CoinDCX spot candles
+        # 4. Fallback to CoinDCX spot candles
         return self.get_spot_raw_candles(pair=f"B-{clean}_USDT", interval=tf, limit=limit)
 
     def get_futures_stats(self, symbol_or_pair: str) -> dict:
@@ -244,13 +271,13 @@ class CoinDCXClient:
         # Handle 5m by fetching 1m and resampling
         if tf in ["5m", "5min"]:
             try:
-                fetch_limit = min(300, max(50, limit * 5))
+                fetch_limit = min(500, max(50, limit * 5))
                 url = f"{self.PUBLIC_URL}/market_data/candles"
-                res = requests.get(url, params={"pair": pair, "interval": "1m", "limit": fetch_limit}, timeout=10)
+                res = requests.get(url, params={"pair": pair, "interval": "1m", "limit": fetch_limit}, headers=self.PUBLIC_HEADERS, timeout=3.5)
                 if res.status_code == 200 and res.json():
                     raw = res.json()[::-1] # oldest first
                     df = pd.DataFrame(raw)
-                    df["time_dt"] = pd.to_datetime(df["time"], unit="ms")
+                    df["time_dt"] = pd.to_datetime(df["time"], unit="ms", utc=True)
                     df = df.set_index("time_dt")
                     for col in ["open", "high", "low", "close", "volume"]:
                         df[col] = pd.to_numeric(df[col])

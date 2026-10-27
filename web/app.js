@@ -120,13 +120,16 @@ function formatCandleTime(timestamp, interval) {
   const mm = d.getMinutes().toString().padStart(2, "0");
   const dd = d.getDate();
   const mmm = months[d.getMonth()];
+  const yy = String(d.getFullYear()).slice(2);
 
   if (tf === "1d" || tf === "d") {
-    return `${dd} ${mmm}`;
+    return `${dd} ${mmm} '${yy}`;
   } else if (tf === "1h") {
     return `${dd} ${mmm} ${hh}:${mm}`;
+  } else if (tf === "15m") {
+    return `${dd} ${mmm} ${hh}:${mm}`;
   } else {
-    // 1m, 5m, 15m
+    // 1m, 5m
     return `${hh}:${mm}`;
   }
 }
@@ -272,14 +275,18 @@ function resetHudToLatest() {
   const latest = activeCandles[activeCandles.length - 1];
   const chg = ((latest.close - latest.open) / latest.open) * 100;
 
-  elHudDate.textContent = formatCandleTime(latest.time, currentInterval);
-  elHudOpen.textContent = formatPrice(latest.open);
-  elHudHigh.textContent = formatPrice(latest.high);
-  elHudLow.textContent = formatPrice(latest.low);
-  elHudClose.textContent = formatPrice(latest.close);
-  elHudChg.textContent = `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`;
-  elHudChg.style.color = chg >= 0 ? "#10b981" : "#ef4444";
-  elHudVol.textContent = Number(latest.volume).toFixed(1);
+  if (elHudDate) {
+    elHudDate.innerHTML = `<span style="color:var(--accent-cyan);font-weight:700;margin-right:3px;">[${currentInterval.toUpperCase()}]</span> ${formatCandleTime(latest.time, currentInterval)}`;
+  }
+  if (elHudOpen) elHudOpen.textContent = formatPrice(latest.open);
+  if (elHudHigh) elHudHigh.textContent = formatPrice(latest.high);
+  if (elHudLow) elHudLow.textContent = formatPrice(latest.low);
+  if (elHudClose) elHudClose.textContent = formatPrice(latest.close);
+  if (elHudChg) {
+    elHudChg.textContent = `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`;
+    elHudChg.style.color = chg >= 0 ? "#10b981" : "#ef4444";
+  }
+  if (elHudVol) elHudVol.textContent = Number(latest.volume).toFixed(1);
 }
 
 
@@ -349,6 +356,14 @@ function renderCandlestickChart(candles, prediction, cursor = null) {
   function yToPrice(y) {
     return yMin + ((paddingTop + plotHeight - y) / plotHeight) * (yMax - yMin);
   }
+
+  // 0. Watermark indicating Coin and Active Timeframe
+  ctx.save();
+  ctx.fillStyle = "rgba(255, 255, 255, 0.04)";
+  ctx.font = `bold ${isMobile ? 18 : 26}px 'JetBrains Mono', monospace`;
+  ctx.textAlign = "right";
+  ctx.fillText(`${currentCoin}USDT.P  [${currentInterval.toUpperCase()}]`, plotWidth - 10, paddingTop + (isMobile ? 22 : 30));
+  ctx.restore();
 
   // 1. Draw Subtle Gridlines & Right Y-Axis Price Labels
   ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
@@ -550,7 +565,7 @@ function renderCandlestickChart(candles, prediction, cursor = null) {
 
       // Update OHLC HUD
       const chg = ((c.close - c.open) / c.open) * 100;
-      elHudDate.textContent = formatCandleTime(c.time, currentInterval);
+      elHudDate.innerHTML = `<span style="color:var(--accent-cyan);font-weight:700;margin-right:3px;">[${currentInterval.toUpperCase()}]</span> ${formatCandleTime(c.time, currentInterval)}`;
       elHudOpen.textContent = formatPrice(c.open);
       elHudHigh.textContent = formatPrice(c.high);
       elHudLow.textContent = formatPrice(c.low);
@@ -567,45 +582,15 @@ function renderCandlestickChart(candles, prediction, cursor = null) {
 async function loadCoinData(coin, isSilent = false) {
   if (!isSilent && elChartLoader) elChartLoader.classList.add("active");
 
+  const requestedTf = currentInterval;
+  const pair = `B-${coin}_USDT`;
+
   try {
-    // 0. Fetch Multi-Timeframe Strategy & Leverage Advisor
-    fetchAdvisorData(coin);
-
-    // 1. Fetch Futures Analysis & Structure
-    const resAnalysis = await fetch(`/api/analyze?coin=${coin}&interval=${currentInterval}`);
-    if (resAnalysis.ok) {
-      const analysis = await resAnalysis.json();
-      if (analysis && analysis.price) {
-        updateUIWithAnalysis(analysis);
-      }
-    }
-
-    // 2. Fetch Futures Live Stats (Funding Rate, Mark Price)
-    const resStats = await fetch(`/api/futures_stats?coin=${coin}`);
-    if (resStats.ok) {
-      const stats = await resStats.json();
-      if (stats && stats.symbol) {
-        activeFuturesStats = stats;
-        updateFuturesStatsUI(stats);
-      }
-    }
-
-    // 3. Fetch 10-Step Forward Predictive Forecast
-    const resPredict = await fetch(`/api/predict?coin=${coin}&interval=${currentInterval}&steps=10`);
-    if (resPredict.ok) {
-      const prediction = await resPredict.json();
-      if (prediction && prediction.direction) {
-        activePrediction = prediction;
-        updatePredictiveUI(prediction);
-      }
-    }
-
-    // 4. Fetch Real Perpetual Futures Candlesticks (Long 90-candle depth)
-    const pair = `B-${coin}_USDT`;
-    const resCandles = await fetch(`/api/candles?pair=${pair}&interval=${currentInterval}&limit=90`);
+    // 1. PRIORITY 1: Fetch Candlesticks FIRST so chart renders instantly (<200ms)
+    const resCandles = await fetch(`/api/candles?pair=${pair}&interval=${requestedTf}&limit=90`);
     if (resCandles.ok) {
       const candleData = await resCandles.json();
-      if (Array.isArray(candleData) && candleData.length > 0) {
+      if (Array.isArray(candleData) && candleData.length > 0 && currentInterval === requestedTf) {
         activeCandles = [...candleData].reverse(); // Chronological oldest to newest
 
         if (chartMode === "ai") {
@@ -614,11 +599,51 @@ async function loadCoinData(coin, isSilent = false) {
         }
       }
     }
+    if (!isSilent && elChartLoader) elChartLoader.classList.remove("active");
 
-    // Update TradingView if in TV mode
+    // 2. PRIORITY 2: Update TradingView if in TV mode
     if (chartMode === "tv") {
       updateTradingViewWidget();
     }
+
+    // 3. PRIORITY 3: Fetch Supplementary Data in parallel (non-blocking)
+    Promise.all([
+      // Multi-Timeframe Strategy & Leverage Advisor
+      fetchAdvisorData(coin),
+      // Futures Structure & Indicators
+      fetch(`/api/analyze?coin=${coin}&interval=${requestedTf}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(analysis => {
+          if (analysis && analysis.price && currentInterval === requestedTf) {
+            updateUIWithAnalysis(analysis);
+          }
+        })
+        .catch(e => console.warn("Analyze fetch error:", e)),
+      // Futures Live Stats (Funding Rate, Mark Price)
+      fetch(`/api/futures_stats?coin=${coin}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(stats => {
+          if (stats && stats.symbol) {
+            activeFuturesStats = stats;
+            updateFuturesStatsUI(stats);
+          }
+        })
+        .catch(e => console.warn("Futures stats fetch error:", e)),
+      // 10-Step Forward Predictive Forecast
+      fetch(`/api/predict?coin=${coin}&interval=${requestedTf}&steps=10`)
+        .then(r => r.ok ? r.json() : null)
+        .then(prediction => {
+          if (prediction && prediction.direction && currentInterval === requestedTf) {
+            activePrediction = prediction;
+            updatePredictiveUI(prediction);
+            if (chartMode === "ai" && activeCandles.length > 0) {
+              renderCandlestickChart(activeCandles, activePrediction);
+            }
+          }
+        })
+        .catch(e => console.warn("Predict fetch error:", e))
+    ]);
+
   } catch (err) {
     console.error("Error loading futures data:", err);
   } finally {
@@ -743,19 +768,26 @@ function updateUIWithAnalysis(a) {
 // 11. Switch Between AI Candlesticks and Official TradingView Futures Chart
 function switchChartMode(mode) {
   chartMode = mode;
-  document.getElementById("btn-mode-ai").classList.toggle("active", mode === "ai");
-  document.getElementById("btn-mode-tv").classList.toggle("active", mode === "tv");
+  const btnAi = document.getElementById("btn-mode-ai");
+  const btnTv = document.getElementById("btn-mode-tv");
+  if (btnAi) btnAi.classList.toggle("active", mode === "ai");
+  if (btnTv) btnTv.classList.toggle("active", mode === "tv");
 
   if (mode === "ai") {
+    elCanvas.classList.remove("chart-hidden");
     elCanvas.style.display = "block";
+    elTradingViewContainer.classList.add("chart-hidden");
     elTradingViewContainer.style.display = "none";
     if (activeCandles.length > 0) {
       renderCandlestickChart(activeCandles, activePrediction);
+      resetHudToLatest();
     }
   } else {
+    elCanvas.classList.add("chart-hidden");
     elCanvas.style.display = "none";
+    elTradingViewContainer.classList.remove("chart-hidden");
     elTradingViewContainer.style.display = "block";
-    updateTradingViewWidget();
+    updateTradingViewWidget(true);
   }
 }
 
@@ -775,12 +807,23 @@ function toggleChartHeight() {
   }, 100);
 }
 
-function updateTradingViewWidget() {
+let lastTvCoin = null;
+let lastTvInterval = null;
+
+function updateTradingViewWidget(force = false) {
+  if (!elTradingViewContainer) return;
+
   if (typeof TradingView === "undefined") {
     elTradingViewContainer.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:center;height:100%;color:#94a3b8;font-size:0.85rem;">
-        Connecting to TradingView Futures Stream...
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#94a3b8;font-size:0.85rem;gap:10px;">
+        <div class="spinner"></div>
+        <div>Connecting to TradingView Futures Stream...</div>
       </div>`;
+    setTimeout(() => {
+      if (chartMode === "tv" && typeof TradingView !== "undefined") {
+        updateTradingViewWidget(true);
+      }
+    }, 600);
     return;
   }
 
@@ -790,24 +833,46 @@ function updateTradingViewWidget() {
   else if (currentInterval === "15m") tvInterval = "15";
   else if (currentInterval === "1d") tvInterval = "D";
 
+  // Prevent constant recreation every 15s polling if coin & interval haven't changed
+  if (!force && lastTvCoin === currentCoin && lastTvInterval === tvInterval && elTradingViewContainer.querySelector("iframe")) {
+    return;
+  }
+
+  lastTvCoin = currentCoin;
+  lastTvInterval = tvInterval;
+
+  // Resolve safe symbol for TradingView
+  const cleanCoin = currentCoin.toUpperCase().replace("B-", "").replace("USDT", "").replace(".P", "").trim();
+  let tvSymbol = `BINANCE:${cleanCoin}USDT.P`;
+  const nonPerpTokens = ["WBTC", "VVV", "PROM"];
+  if (nonPerpTokens.includes(cleanCoin)) {
+    if (cleanCoin === "WBTC") tvSymbol = "BINANCE:BTCUSDT.P";
+    else tvSymbol = `BINANCE:${cleanCoin}USDT`;
+  }
+
   elTradingViewContainer.innerHTML = "";
   try {
     tvWidget = new TradingView.widget({
       "autosize": true,
-      "symbol": `BINANCE:${currentCoin}USDT.P`,
+      "symbol": tvSymbol,
       "interval": tvInterval,
       "timezone": "Asia/Kolkata",
       "theme": "dark",
-      "style": "1", // 1 = Real Candlesticks
+      "style": "1", // Real Candlesticks
       "locale": "in",
       "toolbar_bg": "#0e131f",
       "enable_publishing": false,
-      "allow_symbol_change": false,
+      "allow_symbol_change": true, // Allow user to search/switch pairs!
+      "withdateranges": true,
+      "hide_side_toolbar": false,
       "container_id": "tradingview-container",
-      "hide_side_toolbar": false
+      "studies": [
+        "MASimple@tv-basicstudies",
+        "RSI@tv-basicstudies"
+      ]
     });
   } catch (e) {
-    console.error("TradingView init error:", e);
+    console.error("TradingView widget init error:", e);
   }
 }
 
@@ -882,11 +947,30 @@ function selectCoin(coin, scrollToTop = false) {
 
 // 14. Timeframe Switcher
 function setTimeframe(tf) {
+  if (!tf) return;
   currentInterval = tf.toLowerCase();
+
+  // 1. Instantly highlight active timeframe button
   document.querySelectorAll(".tf-btn").forEach(btn => {
-    const btnTf = btn.getAttribute("data-tf") || btn.textContent.trim().toLowerCase();
+    const btnTf = (btn.getAttribute("data-tf") || btn.textContent).trim().toLowerCase();
     btn.classList.toggle("active", btnTf === currentInterval);
   });
+
+  // 2. Instantly update active timeframe badge in chart header
+  const tfTag = document.getElementById("active-timeframe-tag");
+  if (tfTag) {
+    tfTag.textContent = `${currentInterval.toUpperCase()} FUTURES`;
+  }
+
+  // 3. Instantly update OHLC HUD indicator
+  resetHudToLatest();
+
+  // 4. If in TradingView mode, re-init TradingView widget with new interval
+  if (chartMode === "tv") {
+    updateTradingViewWidget(true);
+  }
+
+  // 5. Fetch fresh candlesticks immediately
   loadCoinData(currentCoin);
 }
 

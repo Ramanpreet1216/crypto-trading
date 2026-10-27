@@ -15,7 +15,7 @@
   <script src="chart.min.js"></script>
   <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
   
-  <link rel="stylesheet" href="styles.css?v=5.0">
+  <link rel="stylesheet" href="styles.css?v=5.1">
 </head>
 <body>
   <div class="app-container">
@@ -112,6 +112,7 @@
             <div style="display: flex; align-items: center; gap: 8px;">
               <h2 id="active-coin-symbol">BTC / USDT</h2>
               <span class="contract-badge" id="contract-badge">BTCUSDT.P (PERPETUAL)</span>
+              <span class="timeframe-badge" id="active-timeframe-tag" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35); font-family: var(--font-mono); font-size: 0.68rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.5px;">1H FUTURES</span>
             </div>
             <div class="price-wrap">
               <span id="active-coin-price" class="main-price">$82,450.00</span>
@@ -198,7 +199,7 @@
           <canvas id="tradingChart"></canvas>
 
           <!-- TradingView Official Futures Embed Container -->
-          <div id="tradingview-container" class="tradingview-container" style="display: none;"></div>
+          <div id="tradingview-container" class="tradingview-container chart-hidden" style="display: none;"></div>
 
           <div id="chart-loader" class="chart-loader">
             <div class="spinner"></div>
@@ -980,6 +981,6 @@
 
   <!-- CoinDCX Official Real-Time WebSocket Streaming Client -->
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-  <script src="app.js?v=5.0"></script>
+  <script src="app.js?v=5.1"></script>
 </body>
 </html>

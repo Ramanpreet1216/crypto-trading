@@ -514,6 +514,10 @@ body {
   border-radius: var(--radius-md);
 }
 
+.chart-hidden {
+  display: none !important;
+}
+
 .chart-loader {
   position: absolute;
   inset: 0;
@@ -4983,13 +4987,26 @@ body {
     overflow: hidden !important;
   }
 
-  canvas#tradingChart,
+  canvas#tradingChart {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    height: 100% !important;
+    display: block;
+  }
+
   #tradingview-container {
     width: 100% !important;
     max-width: 100% !important;
     min-width: 0 !important;
     height: 100% !important;
-    display: block !important;
+    min-height: 310px !important;
+    display: block;
+  }
+
+  canvas#tradingChart.chart-hidden,
+  #tradingview-container.chart-hidden {
+    display: none !important;
   }
 
   .ohlc-hud {
