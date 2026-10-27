@@ -1171,13 +1171,25 @@ async function syncBotStatus() {
         }
         if (!targetPnlPct || targetPnlPct <= 0) targetPnlPct = 15.0;
 
-        // Needle percentage: 0% = -48% SL defense, 50% = Entry (0%), 100% = Target TP
+        // Real Active Stop-Loss & Loss INR calculations
+        const investedNum = Number(pos.invested || 200.0);
+        const realSl = Number(pos.stop_loss || pos.trailing_stop || 0);
+        let slPnlPct = 48.0;
+        let slLossInr = investedNum * 0.48;
+        if (realSl > 0 && entry > 0) {
+          const slSpotMove = isShort ? ((realSl - entry) / entry) * 100 : ((entry - realSl) / entry) * 100;
+          slPnlPct = Math.max(0.5, slSpotMove * lev);
+          slLossInr = investedNum * (slPnlPct / 100.0);
+        }
+
+        // Needle percentage: 0% = Active SL, 50% = Entry (0%), 100% = Target TP
+        const maxSlPct = realSl > 0 ? slPnlPct : 48.0;
         let needlePct = 50.0;
         if (grossPnlPct >= 0) {
           const ratio = Math.min(1.0, grossPnlPct / targetPnlPct);
           needlePct = 50.0 + (ratio * 50.0);
         } else {
-          const ratio = Math.min(1.0, Math.abs(grossPnlPct) / 48.0);
+          const ratio = Math.min(1.0, Math.abs(grossPnlPct) / Math.max(1.0, maxSlPct));
           needlePct = 50.0 - (ratio * 50.0);
         }
         needlePct = Math.max(3, Math.min(97, Math.round(needlePct * 10) / 10));
@@ -1195,14 +1207,12 @@ async function syncBotStatus() {
           fillStyle = `left: ${needlePct.toFixed(1)}%; width: ${(50 - needlePct).toFixed(1)}%;`;
         }
 
-        const investedNum = Number(pos.invested || 200.0);
         const curActivePnlInr = investedNum * (grossPnlPct / 100.0);
         const pnlInrSign = curActivePnlInr >= 0 ? "+₹" : "-₹";
         const pnlInrFormatted = `${pnlInrSign}${Math.abs(curActivePnlInr).toFixed(2)}`;
 
-        // Expected INR amounts at Target TP and at -48% SL Defense
+        // Expected INR amounts at Target TP
         const tpGainInr = investedNum * (targetPnlPct / 100.0);
-        const slLossInr = investedNum * (48.0 / 100.0);
 
         posHtml += `
           <div class="active-pos-card ${isShort ? 'short-pos' : 'long-pos'}" id="pos-card-${pos.symbol}">
@@ -1222,8 +1232,8 @@ async function syncBotStatus() {
                 <span>Margin:</span> <b>₹${invested}</b> (${qty} ${pos.symbol})
               </div>
               <div class="pos-m-row">
-                <span>Target:</span> <b class="pos-tp-txt">${target} (+${targetPnlPct.toFixed(0)}% / +₹${tpGainInr.toFixed(2)})</b> • 
-                <span>${hasProfitLock ? 'Profit Lock:' : 'SL Defense:'}</span> <b class="${hasProfitLock ? 'pos-lock-txt' : 'pos-sl-txt'}">${hasProfitLock ? '🔒 +' + (trailLockPct || 7) + '% (' + formatPrice(slDefense) + ')' : formatPrice(slDefense) + ' (-48% / -₹' + slLossInr.toFixed(2) + ')'}</b>
+                <span>Target (TP):</span> <b class="pos-tp-txt">${target} (+${targetPnlPct.toFixed(0)}% / +₹${tpGainInr.toFixed(2)})</b> • 
+                <span>${hasProfitLock ? 'Profit Lock:' : 'Stop Loss (SL):'}</span> <b class="${hasProfitLock ? 'pos-lock-txt' : 'pos-sl-txt'}">${hasProfitLock ? '🔒 +' + (trailLockPct || 7) + '% (' + formatPrice(slDefense) + ')' : formatPrice(realSl || slDefense) + ' (-' + slPnlPct.toFixed(1) + '% / -₹' + slLossInr.toFixed(2) + ')'}</b>
               </div>
             </div>
 
@@ -1247,8 +1257,8 @@ async function syncBotStatus() {
               <!-- Legend / Labels Below Bar -->
               <div class="pos-gauge-labels">
                 <div class="pos-gl-item ${hasProfitLock ? 'pos-gl-lock' : 'pos-gl-sl'}">
-                  <span class="pos-gl-title">${hasProfitLock ? `🔒 +${trailLockPct || 7}% Lock` : '🛡️ -48% Def (-₹' + slLossInr.toFixed(0) + ')'}</span>
-                  <span class="pos-gl-val">${formatPrice(slDefense)}</span>
+                  <span class="pos-gl-title">${hasProfitLock ? `🔒 +${trailLockPct || 7}% Lock` : (realSl > 0 ? `🛑 SL -${slPnlPct.toFixed(1)}% (-₹${slLossInr.toFixed(0)})` : `🛡️ -48% Def (-₹${slLossInr.toFixed(0)})`)}</span>
+                  <span class="pos-gl-val">${formatPrice(realSl > 0 ? realSl : slDefense)}</span>
                 </div>
                 <div class="pos-gl-item pos-gl-entry">
                   <span class="pos-gl-title">📍 Entry</span>
