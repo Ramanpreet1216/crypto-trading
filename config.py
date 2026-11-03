@@ -190,10 +190,10 @@ REQUIRE_TREND_STRENGTH = True      # Reject breakout if market is consolidating/
 # ==============================================================================
 # STRATEGY SELECTION
 # ==============================================================================
-# "TURTLE"   : Richard Dennis & William Eckhardt Turtle System 2 (Proven winner in crypto thesis)
-#              55-period Donchian Breakout + 2N (ATR 20) Volatility-Adaptive Stop Loss + 20-period Exit
-# "EMA_RSI"  : Legacy Fast/Slow EMA Crossover with RSI Filter
-STRATEGY_MODE = os.getenv("STRATEGY_MODE", "TURTLE")
+# "USER_MIRROR": Multi-Timeframe Confluence (1m, 5m, 15m, 1h, 1d) 4/5 or 5/5 Agreement (4-5 Trades/Day)
+# "TURTLE"     : Richard Dennis & William Eckhardt Turtle System 2 (55-period Donchian Breakout + 2N ATR Stop)
+# "EMA_RSI"    : Legacy Fast/Slow EMA Crossover with RSI Filter
+STRATEGY_MODE = os.getenv("STRATEGY_MODE", "USER_MIRROR")
 
 # Turtle Strategy Parameters (Calibrated from Crypto Thesis Findings)
 TURTLE_SYSTEM = 2                   # System 2 (55-period Breakout) or System 1 (20-period Breakout)

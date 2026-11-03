@@ -208,22 +208,40 @@ def evaluate_signal(
     # --------------------------------------------------------------------------
     # Bullish Breakout: Current Close pierces above the 55-bar Donchian High
     is_breakout = current_price > donchian_high
+    # Bearish Breakdown: Current Close pierces below the 55-bar Donchian Low
+    is_breakdown = current_price < donchian_low
+
+    vol_surge = float(latest.get("vol_surge_ratio", 1.0))
+    min_vol_surge = float(getattr(config, "MIN_VOLUME_SURGE_RATIO", 1.25))
+    adx_val = float(latest.get("adx", 25.0))
+    min_adx = float(getattr(config, "MIN_ADX_TREND_STRENGTH", 20.0))
 
     if is_breakout:
         # 1. Volume Surge Confirmation Filter (Anti-Fakeout Shield)
-        vol_surge = float(latest.get("vol_surge_ratio", 1.0))
-        min_vol_surge = float(getattr(config, "MIN_VOLUME_SURGE_RATIO", 1.25))
         if getattr(config, "REQUIRE_VOLUME_CONFIRMATION", True) and vol_surge < min_vol_surge:
             return "HOLD", f"Breakout detected but rejected: Weak volume surge ({vol_surge:.2f}x < {min_vol_surge:.2f}x required). Avoiding fakeout trap.", metrics
 
         # 2. Market Regime & Trend Strength Filter (ADX vs Chop Shield)
-        adx_val = float(latest.get("adx", 25.0))
-        min_adx = float(getattr(config, "MIN_ADX_TREND_STRENGTH", 20.0))
         if getattr(config, "REQUIRE_TREND_STRENGTH", True) and adx_val < min_adx:
             return "HOLD", f"Breakout detected but rejected: Market is choppy/consolidating (ADX {adx_val:.1f} < {min_adx:.1f}). Standing down.", metrics
 
         reason = f"Turtle 1:2 Breakout Entry! Close ({current_price:,.2f}) > 55-bar High ({donchian_high:,.2f}) | Vol: {vol_surge:.2f}x surge, ADX: {adx_val:.1f} | 1R SL: {turtle_stop_price:,.2f}, +2R TP: {turtle_tp_price:,.2f}"
         return "BUY", reason, metrics
+
+    if is_breakdown:
+        short_stop_price = current_price + (stop_multiple * n_val)
+        short_tp_price, _ = calculate_trade_targets(current_price, "SHORT", short_stop_price, risk_reward_ratio=risk_reward_ratio)
+        metrics["turtle_stop_loss"] = round(short_stop_price, 4)
+        metrics["turtle_take_profit"] = round(short_tp_price, 4)
+
+        if getattr(config, "REQUIRE_VOLUME_CONFIRMATION", True) and vol_surge < min_vol_surge:
+            return "HOLD", f"Breakdown detected but rejected: Weak volume surge ({vol_surge:.2f}x < {min_vol_surge:.2f}x required).", metrics
+
+        if getattr(config, "REQUIRE_TREND_STRENGTH", True) and adx_val < min_adx:
+            return "HOLD", f"Breakdown detected but rejected: Market is choppy/consolidating (ADX {adx_val:.1f} < {min_adx:.1f}).", metrics
+
+        reason = f"Turtle 1:2 Breakdown Entry! Close ({current_price:,.2f}) < 55-bar Low ({donchian_low:,.2f}) | Vol: {vol_surge:.2f}x surge, ADX: {adx_val:.1f} | 1R SL: {short_stop_price:,.2f}, +2R TP: {short_tp_price:,.2f}"
+        return "SELL_SHORT", reason, metrics
 
     return "HOLD", f"Waiting for 1:2 Turtle Breakout (55-High: {donchian_high:,.2f}, 55-Low: {donchian_low:,.2f}, N: {n_val:,.2f})", metrics
 

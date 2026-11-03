@@ -754,10 +754,17 @@ def bot_worker():
                     if not exit_trigger and (pos.get("strategy") == "TURTLE_SYSTEM_2" or getattr(config, "STRATEGY_MODE", "TURTLE") == "TURTLE"):
                         t_sl = pos.get("stop_loss")
                         t_exit_low = pos.get("exit_channel_low")
-                        if t_sl and current_price <= float(t_sl):
-                            exit_trigger = f"Turtle 2N Volatility Stop-Loss hit at ${current_price:.4f} <= ${float(t_sl):.4f}"
-                        elif t_exit_low and current_price < float(t_exit_low):
-                            exit_trigger = f"Turtle 20-bar Channel Low Exit triggered at ${current_price:.4f} < ${float(t_exit_low):.4f}"
+                        t_exit_high = pos.get("exit_channel_high")
+                        if pos_dir == "LONG":
+                            if t_sl and current_price <= float(t_sl):
+                                exit_trigger = f"Turtle 2N Volatility Stop-Loss hit at ${current_price:.4f} <= ${float(t_sl):.4f}"
+                            elif t_exit_low and current_price < float(t_exit_low):
+                                exit_trigger = f"Turtle 20-bar Channel Low Exit triggered at ${current_price:.4f} < ${float(t_exit_low):.4f}"
+                        else:  # SHORT
+                            if t_sl and current_price >= float(t_sl):
+                                exit_trigger = f"Turtle 2N Volatility Stop-Loss hit at ${current_price:.4f} >= ${float(t_sl):.4f}"
+                            elif t_exit_high and current_price > float(t_exit_high):
+                                exit_trigger = f"Turtle 20-bar Channel High Exit triggered at ${current_price:.4f} > ${float(t_exit_high):.4f}"
 
                     if exit_trigger:
                         proceeds = round(invested + net_pnl, 2)
@@ -1001,13 +1008,17 @@ def bot_worker():
 
                                 turtle_sl = None
                                 exit_ch_low = None
+                                exit_ch_high = None
                                 turtle_n = None
                                 if is_turtle_mode:
                                     t_sig, t_reason, t_metrics = evaluate_signal(c_candles)
-                                    if t_sig != "BUY":
+                                    if pos_dir == "LONG" and t_sig != "BUY":
+                                        continue
+                                    if pos_dir == "SHORT" and t_sig != "SELL_SHORT":
                                         continue
                                     turtle_sl = t_metrics.get("turtle_stop_loss")
                                     exit_ch_low = t_metrics.get("exit_low")
+                                    exit_ch_high = t_metrics.get("exit_high")
                                     turtle_n = t_metrics.get("n_volatility")
 
                                 # 4. ANTI-FOMO MOMENTUM & VALUE GATES:
@@ -1057,28 +1068,34 @@ def bot_worker():
                                 else:
                                     target_roi_pct = float(getattr(config, "TARGET_PROFIT_ROI_PCT", 6.8))
 
+                                min_sl_pct = float(getattr(config, "STOP_LOSS_PERCENT", 3.0)) / 100.0
+                                min_sl_dist = live_p * min_sl_pct
+                                rrr = float(getattr(config, "RISK_REWARD_RATIO", 2.0))
+
                                 target_move_pct = target_roi_pct / max(1, pos_lev)
 
                                 pred_target = float(candidate.get("target_price", 0) or 0)
                                 if is_turtle_mode and turtle_sl:
-                                    # Strict 1:2 Risk-to-Reward Ratio (Reward = 2 x Risk distance) with Safe Min 3.5% Buffer
-                                    min_sl_dist = live_p * (float(getattr(config, "STOP_LOSS_PERCENT", 3.5)) / 100.0)
+                                    # Strict 1:2 Risk-to-Reward Ratio (Reward = 2 x Risk distance) with Safe Min 3.0% Buffer
                                     risk_dist = max(min_sl_dist, abs(live_p - turtle_sl))
                                     if pos_dir == "LONG":
-                                        target_price = round(live_p + (risk_dist * 2.0), precision)
+                                        target_price = round(live_p + (risk_dist * rrr), precision)
                                         stop_loss = round(min(live_p - min_sl_dist, turtle_sl), precision)
                                     else:
-                                        target_price = round(live_p - (risk_dist * 2.0), precision)
+                                        target_price = round(live_p - (risk_dist * rrr), precision)
                                         stop_loss = round(max(live_p + min_sl_dist, turtle_sl), precision)
                                 elif pred_target > 0 and ((pos_dir == "LONG" and pred_target > live_p) or (pos_dir == "SHORT" and pred_target < live_p)):
                                     predicted_move_pct = abs((pred_target - live_p) / live_p) * 100.0
                                     capped_move_pct = min(target_move_pct, predicted_move_pct * front_run)
+                                    capped_move_pct = max(capped_move_pct, (min_sl_pct * 100.0) * rrr)
                                     target_price = round(live_p * (1.0 + (capped_move_pct / 100.0)), precision) if pos_dir == "LONG" else round(live_p * (1.0 - (capped_move_pct / 100.0)), precision)
                                     stop_loss = round(live_p * (1.0 - min_sl_pct), precision) if pos_dir == "LONG" else round(live_p * (1.0 + min_sl_pct), precision)
                                 elif pos_dir == "LONG":
+                                    target_move_pct = max(target_move_pct, (min_sl_pct * 100.0) * rrr)
                                     target_price = round(live_p * (1.0 + (target_move_pct / 100.0)), precision)
                                     stop_loss = round(live_p * (1.0 - min_sl_pct), precision)
                                 else:
+                                    target_move_pct = max(target_move_pct, (min_sl_pct * 100.0) * rrr)
                                     target_price = round(live_p * (1.0 - (target_move_pct / 100.0)), precision)
                                     stop_loss = round(live_p * (1.0 + min_sl_pct), precision)
 
@@ -1117,7 +1134,7 @@ def bot_worker():
                                 new_pos = {
                                     "symbol": c_coin,
                                     "pair": c_pair,
-                                    "strategy": "TURTLE_SYSTEM_2" if is_turtle_mode else "MANUAL",
+                                    "strategy": "TURTLE_SYSTEM_2" if is_turtle_mode else "USER_MIRROR",
                                     "direction": pos_dir,
                                     "buy_price": live_p,
                                     "current_price": live_p,
@@ -1125,8 +1142,9 @@ def bot_worker():
                                     "invested": spend,
                                     "leverage": pos_lev,
                                     "target": target_price,
-                                    "stop_loss": turtle_sl if (is_turtle_mode and turtle_sl) else stop_loss,
+                                    "stop_loss": stop_loss,
                                     "exit_channel_low": exit_ch_low,
+                                    "exit_channel_high": exit_ch_high,
                                     "n_volatility": turtle_n,
                                     "trailing_stop": None,
                                     "margin_defended": False,

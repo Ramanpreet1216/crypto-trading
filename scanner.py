@@ -411,6 +411,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     seen = set()
 
     for pool in [usdt_pairs_sorted_gain[:15], usdt_pairs_sorted_vol[:20], usdt_pairs_sorted_loss[:15]]:
+        for item in pool:
             sym = item.get("symbol", "").replace("USDT", "")
             if sym.isascii() and sym.isalnum() and sym not in seen and not is_peg_or_stable(item):
                 seen.add(sym)
