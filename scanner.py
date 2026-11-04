@@ -325,15 +325,15 @@ def check_macro_daily_trend(coin: str, client=None) -> Dict[str, Any]:
 
 
 
-def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", limit: int = 35) -> List[Dict[str, Any]]:
+def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", limit: int = 35, force: bool = False) -> List[Dict[str, Any]]:
     """
-    High-Performance Multi-Crypto Quantitative Scanner with 90s in-memory caching.
+    High-Performance Multi-Crypto Quantitative Scanner with 15s in-memory caching and force-refresh support.
     """
     global _SIGNALS_CACHE
     now = time.time()
     cache_key = (min_confidence, direction, limit)
     cached = _SIGNALS_CACHE.get(cache_key)
-    if cached and (now - cached["timestamp"]) < 90.0:
+    if not force and cached and (now - cached["timestamp"]) < 15.0:
         return cached["data"]
 
     from coindcx_client import CoinDCXClient
@@ -578,6 +578,23 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
 
     scan_results.sort(key=lambda x: (x["probability"], abs(x["expected_change_pct"])), reverse=True)
     final_res = scan_results[:limit]
+
+    # Attach true Empirical Success Rates across [1m, 5m, 15m, 1h, 1d] to each top signal
+    for item in final_res:
+        try:
+            emp = predictor.calculate_empirical_success_rate(item["coin"], client=client)
+            item["empirical_success_rate"] = emp.get("dominant_success_rate", item["probability"])
+            item["long_success_rate"] = emp.get("long_success_rate", 50.0)
+            item["short_success_rate"] = emp.get("short_success_rate", 50.0)
+            item["dominant_direction"] = emp.get("dominant_direction", item["direction"])
+            item["empirical_timeframes"] = emp.get("timeframes", {})
+        except Exception:
+            item["empirical_success_rate"] = item["probability"]
+            item["long_success_rate"] = item["probability"] if item["direction"] == "UP" else (100.0 - item["probability"])
+            item["short_success_rate"] = round(100.0 - item["long_success_rate"], 1)
+            item["dominant_direction"] = "LONG" if item["direction"] == "UP" else "SHORT"
+            item["empirical_timeframes"] = {}
+
     _SIGNALS_CACHE[cache_key] = {"data": final_res, "timestamp": now}
     return final_res
 

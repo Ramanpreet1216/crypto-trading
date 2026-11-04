@@ -1678,7 +1678,8 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
             min_conf = int(query.get("min_conf", [75])[0])
             direction = query.get("direction", ["ALL"])[0].upper()
             limit = int(query.get("limit", [35])[0])
-            signals = scanner.scan_all_crypto_signals(min_confidence=min_conf, direction=direction, limit=limit)
+            force_scan = query.get("force", ["0"])[0].lower() in ["1", "true", "yes"]
+            signals = scanner.scan_all_crypto_signals(min_confidence=min_conf, direction=direction, limit=limit, force=force_scan)
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
