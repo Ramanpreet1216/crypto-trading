@@ -63,9 +63,9 @@ RISK_PROFILES = {
         "leverage_alts": (3, 4),
         "investment_inr": 2500.0,
         "min_confidence": 86,          # Calibrated for 4 to 5 high-conviction trades per day
-        "stop_loss_pct": 3.0,          # Tight 3.0% SL buffer (max ₹90 - ₹120 net loss)
-        "take_profit_pct": 6.5,        # 1:2.2 R:R (6.5% spot target = +26% on 4x = +₹430 net profit)
-        "target_profit_min_inr": 280.0,
+        "stop_loss_pct": 1.85,         # Asymmetric 1.85% spot SL (~7.4% on 4x = -₹185 max loss)
+        "take_profit_pct": 3.80,       # Asymmetric 3.80% spot TP (~15.2% on 4x = +₹380 gross, +₹240 net after Indian 31.2% tax & TDS)
+        "target_profit_min_inr": 240.0,
         "target_profit_max_inr": 600.0,
         "front_run_ratio": 0.85,
         "margin_defense_drawdown_pct": -48.0,
@@ -118,10 +118,10 @@ MARGIN_DEFENSE_DRAWDOWN_PCT = -48.0  # At -48% drawdown (~6.5% spot drop), check
 MARGIN_DEFENSE_TOPUP_RATIO = 0.50    # Top up 50% margin to de-leverage (e.g. 8x -> 5.3x) and absorb drawdown
 HARD_STOP_LOSS_MARGIN_PCT = -58.0    # Final hard stop barrier (~8% spot drop) to prevent deep losses
 
-# Target Profit Settings: Dynamic +22.0% Take-Profit (~₹400 - ₹650 Net Profit per trade)
-TARGET_PROFIT_MIN_INR = 280.0         # ₹280 minimum net profit per trade
-TARGET_PROFIT_MAX_INR = 650.0         # ₹650 maximum target profit for breakout runners
-TARGET_PROFIT_ROI_PCT = 22.0          # +22.0% Baseline Target ROI on margin (~5.5% spot move at 4x)
+# Target Profit Settings: Dynamic +15.0% Take-Profit (~₹380 Gross / +₹240 Net Profit after 31.2% Tax & TDS)
+TARGET_PROFIT_MIN_INR = 240.0         # ₹240 minimum net profit per trade
+TARGET_PROFIT_MAX_INR = 600.0         # ₹600 maximum target profit for breakout runners
+TARGET_PROFIT_ROI_PCT = 15.0          # +15.0% Baseline Target ROI on margin (~3.8% spot move at 4x)
 FRONT_RUN_RATIO = 0.85                # Front-run predicted target at 85% distance to guarantee fill
 
 # Capital Opportunity Rotation Settings (DISABLED to let winners run to full target!)
@@ -137,6 +137,7 @@ TRAILING_PROFIT_STAIRCASE = [
     (22.0, 15.0), # At +22% ROI -> Lock +15.0% profit (~₹240 net profit)
     (15.0, 10.0), # At +15% ROI -> Lock +10.0% profit (~₹160 net profit)
     (10.0, 6.0),  # At +10% ROI -> Lock +6.0% profit (~₹100 net profit, guaranteed green after TDS/fees)
+    (7.5, 3.5),   # At +7.5% ROI -> Lock +3.5% Tax & Fee Armor (100% covers TDS, fee, and 31.2% tax)
 ]
 
 # ==============================================================================

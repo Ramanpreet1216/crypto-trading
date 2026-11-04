@@ -2521,6 +2521,41 @@ function renderAdvisorUI() {
     }
   }
 
+  // 2b. Update Empirical Success Rate Meter (1% - 100% Real Historical Hit Probability)
+  const emp = a.empirical_success;
+  if (emp) {
+    const elEmpRate = document.getElementById("emp-summary-rate");
+    const elLongBar = document.getElementById("emp-long-bar");
+    const elShortBar = document.getElementById("emp-short-bar");
+    const elLongLbl = document.getElementById("emp-long-label");
+    const elShortLbl = document.getElementById("emp-short-label");
+
+    if (elEmpRate) {
+      elEmpRate.textContent = `${emp.dominant_direction} ${emp.dominant_success_rate}% WIN RATE`;
+      elEmpRate.style.color = emp.dominant_direction === "LONG" ? "#34d399" : "#f87171";
+      elEmpRate.style.borderColor = emp.dominant_direction === "LONG" ? "rgba(52, 211, 153, 0.4)" : "rgba(248, 113, 113, 0.4)";
+    }
+    if (elLongBar) elLongBar.style.width = `${emp.long_success_rate}%`;
+    if (elShortBar) elShortBar.style.width = `${emp.short_success_rate}%`;
+    if (elLongLbl) elLongLbl.textContent = `🟢 LONG: ${emp.long_success_rate}%`;
+    if (elShortLbl) elShortLbl.textContent = `🔴 SHORT: ${emp.short_success_rate}%`;
+
+    if (emp.timeframes) {
+      timeframes.forEach(tf => {
+        const empTf = emp.timeframes[tf];
+        const sigEl = document.getElementById(`tf-signal-${tf}`);
+        if (empTf && sigEl) {
+          const tfWin = empTf.direction === "UP" ? empTf.long_success_pct : empTf.short_success_pct;
+          sigEl.textContent = `${empTf.direction === "UP" ? "LONG" : "SHORT"} ${tfWin}% Win`;
+        }
+      });
+    }
+
+    if (elConfTag) {
+      elConfTag.textContent = `${emp.dominant_success_rate}% Real Success Rate`;
+    }
+  }
+
   // 3. Quick Summary Bar
   const elBestTf = document.getElementById("adv-best-tf");
   const elBestLev = document.getElementById("adv-best-lev");

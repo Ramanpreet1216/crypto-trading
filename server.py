@@ -718,17 +718,12 @@ def bot_worker():
                     # A trade must NEVER close on a 'Profit Target' unless net_pnl is strictly positive!
                     is_turtle = pos.get("strategy") == "TURTLE_SYSTEM_2" or getattr(config, "STRATEGY_MODE", "TURTLE") == "TURTLE"
 
-                    if not exit_trigger and not is_turtle:
-                        # For non-turtle scalpers, only exit on quick recovery if NET profit in pocket is >= ₹30
-                        if net_pnl >= 30.0 and gross_pnl_pct >= 2.5:
-                            exit_trigger = f"Quick Target Hit (+{gross_pnl_pct:.1f}% ROI / Net ₹{net_pnl:+.2f})!"
-
                     if not exit_trigger:
-                        target_roi = float(getattr(config, "TARGET_PROFIT_ROI_PCT", 6.8))
-                        max_tp_inr = float(getattr(config, "TARGET_PROFIT_MAX_INR", 50.0))
+                        target_roi = float(getattr(config, "TARGET_PROFIT_ROI_PCT", 15.0))
+                        max_tp_inr = float(getattr(config, "TARGET_PROFIT_MAX_INR", 600.0))
 
                         # Only trigger standard take-profit if Net PnL is positive and meets minimum net profit goal (after all fees & TDS)
-                        min_net_goal = float(getattr(config, "TARGET_PROFIT_MIN_INR", 280.0))
+                        min_net_goal = float(getattr(config, "TARGET_PROFIT_MIN_INR", 240.0))
                         if pos_dir == "LONG":
                             if target_p and current_price >= target_p and net_pnl > 0:
                                 runner_note = f" [Runner Target +{pos.get('runner_target_pct', 35)}% Hit!]" if pos.get("is_runner") else ""
@@ -1059,16 +1054,8 @@ def bot_worker():
                                 # - 88% - 92%+ Confidence: High-Conviction Breakout +12.0% to +14.0% ROI (₹42 - ₹50 profit)
                                 front_run = getattr(config, "FRONT_RUN_RATIO", 0.75)
                                 c_prob = float(candidate.get("probability", 85) or 85)
-                                if c_prob >= 90.0:
-                                    target_roi_pct = 14.0  # ₹49 - ₹50 profit on ₹350 margin (~2.0% spot move on 7x)
-                                elif c_prob >= 88.0:
-                                    target_roi_pct = 12.0  # ₹42 profit on ₹350 margin (~1.7% spot move on 7x)
-                                elif c_prob >= 86.0:
-                                    target_roi_pct = 8.5   # ₹30 profit on ₹350 margin (~1.2% spot move on 7x)
-                                else:
-                                    target_roi_pct = float(getattr(config, "TARGET_PROFIT_ROI_PCT", 6.8))
-
-                                min_sl_pct = float(getattr(config, "STOP_LOSS_PERCENT", 3.0)) / 100.0
+                                target_roi_pct = float(getattr(config, "TARGET_PROFIT_ROI_PCT", 15.0))
+                                min_sl_pct = float(getattr(config, "STOP_LOSS_PERCENT", 1.85)) / 100.0
                                 min_sl_dist = live_p * min_sl_pct
                                 rrr = float(getattr(config, "RISK_REWARD_RATIO", 2.0))
 
@@ -1551,6 +1538,12 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
                 "timeframes": tf_data,
                 "leverage_table": leverage_table
             }
+            try:
+                emp_data = predictor.calculate_empirical_success_rate(coin, client=client)
+                response_data["empirical_success"] = emp_data
+            except Exception:
+                response_data["empirical_success"] = None
+
             _ADVISOR_CACHE[coin] = {"data": response_data, "timestamp": now_a}
 
             self.send_response(200)
@@ -1558,6 +1551,18 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(json.dumps(response_data).encode("utf-8"))
+            return
+
+        # API: Empirical Success Rate Engine (1% - 100% Real Historical Win Probability)
+        elif path == "/api/success_rate":
+            coin = query.get("coin", [bot_state.get("selected_coin", "BTC")])[0].upper()
+            client = CoinDCXClient()
+            data = predictor.calculate_empirical_success_rate(coin, client=client)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode("utf-8"))
             return
 
         # API: Candle Data for Chart (Supports 1m, 5m, 15m, 1h, 1d) with 5s cache
