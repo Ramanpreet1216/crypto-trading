@@ -187,10 +187,10 @@ document.addEventListener("DOMContentLoaded", () => {
     pollAlerts();
   }, 20000);
 
-  // Periodic scanner auto-refresh every 15 seconds for live empirical rate updates
+  // Periodic scanner auto-refresh every 60 seconds
   setInterval(() => {
     runMarketScan(false);
-  }, 15000);
+  }, 60000);
 
   // Periodic market radar refresh every 45 seconds
   setInterval(() => {
@@ -3043,7 +3043,7 @@ async function runMarketScan(userTriggered = false) {
   if (summaryEl) summaryEl.textContent = "Running multi-factor predictive scan across 739 perpetual markets...";
 
   try {
-    const res = await fetch(`/api/scan_all?min_conf=70&limit=35${userTriggered ? "&force=1" : ""}`);
+    const res = await fetch("/api/scan_all?min_conf=70&limit=35");
     if (!res.ok) {
       if (summaryEl) summaryEl.textContent = "Scanner updating in background, will sync shortly...";
       return;
@@ -3116,10 +3116,6 @@ function renderScannerCards(items) {
   container.innerHTML = items.map(s => {
     const isUp = s.direction === "UP";
     const isUltra = s.probability >= 85;
-    const empRate = s.empirical_success_rate || s.probability || 50;
-    const longRate = s.long_success_rate !== undefined ? s.long_success_rate : (isUp ? empRate : (100 - empRate));
-    const shortRate = s.short_success_rate !== undefined ? s.short_success_rate : (100 - longRate);
-    const empDom = s.dominant_direction || (isUp ? "LONG" : "SHORT");
 
     const confluencesHtml = (s.confluences || []).slice(0, 3).map(c => `
       <div class="sc-conf-item">
@@ -3152,26 +3148,6 @@ function renderScannerCards(items) {
           </div>
         </div>
 
-        <!-- Little Bar for ACTUAL EMPIRICAL SUCCESS RATE [1m, 5m, 15m, 1h, 1d] -->
-        <div class="sc-empirical-bar-wrap" style="margin-top: 8px; background: rgba(15, 23, 42, 0.7); border-radius: 6px; padding: 6px 8px; border: 1px solid rgba(56, 189, 248, 0.25);">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px; font-size: 0.64rem;">
-            <span style="color: #94a3b8; font-weight: 700; display: flex; align-items: center; gap: 4px;">
-              <span>🎯 ACTUAL SUCCESS RATE</span>
-            </span>
-            <span style="font-family: var(--font-mono); font-weight: 800; color: ${isUp ? '#34d399' : '#f87171'}; font-size: 0.72rem;">
-              ${empDom} ${empRate}% WIN RATE
-            </span>
-          </div>
-          <div style="height: 6px; width: 100%; background: #0f172a; border-radius: 3px; overflow: hidden; display: flex;">
-            <div style="width: ${longRate}%; background: linear-gradient(90deg, #059669, #34d399); transition: width 0.3s ease;"></div>
-            <div style="width: ${shortRate}%; background: linear-gradient(90deg, #f87171, #ef4444); transition: width 0.3s ease;"></div>
-          </div>
-          <div style="display: flex; justify-content: space-between; margin-top: 3px; font-size: 0.58rem; font-family: var(--font-mono);">
-            <span style="color: #34d399; font-weight: 700;">🟢 L: ${longRate}%</span>
-            <span style="color: #64748b;">[1m•5m•15m•1h•1d]</span>
-            <span style="color: #f87171; font-weight: 700;">🔴 S: ${shortRate}%</span>
-          </div>
-        </div>
 
         <div class="sc-metrics-grid">
           <div class="sc-metric-col">

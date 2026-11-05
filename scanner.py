@@ -325,7 +325,7 @@ def check_macro_daily_trend(coin: str, client=None) -> Dict[str, Any]:
 
 
 
-def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", limit: int = 35, force: bool = False) -> List[Dict[str, Any]]:
+def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", limit: int = 35) -> List[Dict[str, Any]]:
     """
     High-Performance Multi-Crypto Quantitative Scanner with 15s in-memory caching and force-refresh support.
     """
@@ -333,7 +333,7 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
     now = time.time()
     cache_key = (min_confidence, direction, limit)
     cached = _SIGNALS_CACHE.get(cache_key)
-    if not force and cached and (now - cached["timestamp"]) < 15.0:
+    if cached and (now - cached["timestamp"]) < 90.0:
         return cached["data"]
 
     from coindcx_client import CoinDCXClient
@@ -546,28 +546,12 @@ def scan_all_crypto_signals(min_confidence: int = 70, direction: str = "ALL", li
             adaptive_lev = mtf.get("adaptive_leverage", 8)
             agreement_str = f"{mtf.get('agreement', 3)}/5 {dir_match}"
 
-            greens = sum(1 for v in mtf.get("timeframes", {}).values() if v == "GREEN")
-            reds = sum(1 for v in mtf.get("timeframes", {}).values() if v == "RED")
-
-            if dir_match == "UP":
-                long_rate = 92.0 if greens == 5 else (84.0 if greens == 4 else 75.0)
-                short_rate = round(100.0 - long_rate, 1)
-                dom_rate = long_rate
-            else:
-                short_rate = 92.0 if reds == 5 else (84.0 if reds == 4 else 75.0)
-                long_rate = round(100.0 - short_rate, 1)
-                dom_rate = short_rate
-
             return {
                 "coin": coin,
                 "symbol": f"{coin}USDT",
                 "contract": f"{coin}USDT.P",
                 "direction": dir_match,
                 "probability": prob,
-                "empirical_success_rate": dom_rate,
-                "long_success_rate": long_rate,
-                "short_success_rate": short_rate,
-                "dominant_direction": "LONG" if dir_match == "UP" else "SHORT",
                 "adaptive_leverage": adaptive_lev,
                 "mtf_agreement": agreement_str,
                 "mtf_timeframes": mtf.get("timeframes", {}),

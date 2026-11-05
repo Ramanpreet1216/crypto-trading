@@ -691,7 +691,7 @@ def bot_worker():
                         exit_trigger = f"Emergency Catastrophic Stop-Loss at ${current_price:.4f} ({hard_sl_threshold:.0f}% Barrier)"
 
                     # 3. Check Take Profit (Target Hit or Profit Target Reached)
-                    active_sl = pos.get("trailing_stop", pos.get("stop_loss"))
+                    active_sl = pos.get("trailing_stop") or pos.get("stop_loss")
                     target_p = pos.get("target")
 
                     # RELIEF TAKE-PROFIT RULE:
@@ -762,6 +762,20 @@ def bot_worker():
                                 exit_trigger = f"Turtle 20-bar Channel High Exit triggered at ${current_price:.4f} > ${float(t_exit_high):.4f}"
 
                     if exit_trigger:
+                        if ("Stop-Loss" in exit_trigger or "Trailing Profit Lock" in exit_trigger) and active_sl:
+                            exec_price = float(active_sl)
+                            gross_move_pct = ((exec_price - buy_price) / max(1e-6, buy_price)) * 100.0 if pos_dir == "LONG" else ((buy_price - exec_price) / max(1e-6, buy_price)) * 100.0
+                            gross_pnl_pct = gross_move_pct * pos_lev
+                            gross_pnl = invested * (gross_pnl_pct / 100.0)
+                            deductions = calculate_trade_deductions(invested, pos_lev, gross_pnl)
+                            trade_fee = deductions["exchange_fee"]
+                            trade_tds = deductions["tds"]
+                            trade_tax = deductions["govt_tax"]
+                            net_pnl = deductions["net_pnl"]
+                            net_pnl_pct = deductions["net_pnl_pct"]
+                        else:
+                            exec_price = current_price
+
                         proceeds = round(invested + net_pnl, 2)
                         bot_state["paper_balance"] = round(bot_state["paper_balance"] + proceeds, 2)
 
@@ -782,7 +796,7 @@ def bot_worker():
                             "type": "SELL" if pos_dir == "LONG" else "BUY_COVER",
                             "coin": pos_symbol,
                             "direction": pos_dir,
-                            "price": current_price,
+                            "price": exec_price,
                             "entry_price": buy_price,
                             "target": target_p,
                             "stop_loss": pos.get("stop_loss"),
@@ -1678,8 +1692,7 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
             min_conf = int(query.get("min_conf", [75])[0])
             direction = query.get("direction", ["ALL"])[0].upper()
             limit = int(query.get("limit", [35])[0])
-            force_scan = query.get("force", ["0"])[0].lower() in ["1", "true", "yes"]
-            signals = scanner.scan_all_crypto_signals(min_confidence=min_conf, direction=direction, limit=limit, force=force_scan)
+            signals = scanner.scan_all_crypto_signals(min_confidence=min_conf, direction=direction, limit=limit)
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
