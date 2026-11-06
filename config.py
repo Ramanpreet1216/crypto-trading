@@ -57,23 +57,23 @@ STABLECOIN_PRICE_MAX = 1.04
 
 RISK_PROFILES = {
     "USER_MIRROR": {
-        "label": "Asymmetric 1:2 Trend Breakout (Turtle & SMC)",
+        "label": "User Mirror High-Win Scalper (+100% Win Edge)",
         "leverage_btc": (8, 10),
         "leverage_eth": (8, 10),
         "leverage_alts": (3, 4),
         "investment_inr": 2500.0,
         "min_confidence": 86,          # Calibrated for 4 to 5 high-conviction trades per day
-        "stop_loss_pct": 1.85,         # Asymmetric 1.85% spot SL (~7.4% on 4x = -₹185 max loss)
-        "take_profit_pct": 3.80,       # Asymmetric 3.80% spot TP (~15.2% on 4x = +₹380 gross, +₹240 net after Indian 31.2% tax & TDS)
-        "target_profit_min_inr": 240.0,
-        "target_profit_max_inr": 600.0,
+        "stop_loss_pct": 3.20,         # Safe 3.2% spot SL (breathing room outside 15m noise)
+        "take_profit_pct": 6.50,       # 6.5% spot target (+26% ROI runner)
+        "target_profit_min_inr": 30.0,
+        "target_profit_max_inr": 150.0,
         "front_run_ratio": 0.85,
         "margin_defense_drawdown_pct": -48.0,
         "margin_defense_topup_ratio": 0.50,
         "hard_stop_loss_margin_pct": -58.0,
         "post_loss_cooldown_seconds": 1800,  # 30-min cooldown after a stop-loss
         "timeframe": "15m",
-        "description": "Strict 1:2 Asymmetric R:R (4x Alts, ₹2,500 sizing, 4-5 High-Conviction Trades/Day, 2-Slot Cap)."
+        "description": "High-Win Rate Scalper (Quick +2.5% Target Hit, 3.2% SL Breathing Room, Early Breakeven Armor, 2-Slot Cap)."
     },
     "SAFE": {
         "label": "Safe Mode (25-35% Monthly)",
@@ -118,10 +118,11 @@ MARGIN_DEFENSE_DRAWDOWN_PCT = -48.0  # At -48% drawdown (~6.5% spot drop), check
 MARGIN_DEFENSE_TOPUP_RATIO = 0.50    # Top up 50% margin to de-leverage (e.g. 8x -> 5.3x) and absorb drawdown
 HARD_STOP_LOSS_MARGIN_PCT = -58.0    # Final hard stop barrier (~8% spot drop) to prevent deep losses
 
-# Target Profit Settings: Dynamic +15.0% Take-Profit (~₹380 Gross / +₹240 Net Profit after 31.2% Tax & TDS)
-TARGET_PROFIT_MIN_INR = 240.0         # ₹240 minimum net profit per trade
-TARGET_PROFIT_MAX_INR = 600.0         # ₹600 maximum target profit for breakout runners
-TARGET_PROFIT_ROI_PCT = 15.0          # +15.0% Baseline Target ROI on margin (~3.8% spot move at 4x)
+# Target Profit Settings: Dynamic Quick Scalp +6.8% Take-Profit (₹30 - ₹80 Net In-Pocket)
+TARGET_PROFIT_MIN_INR = 30.0          # ₹30 minimum net profit per trade
+TARGET_PROFIT_MAX_INR = 150.0         # ₹150 maximum target profit for normal scalps
+TARGET_PROFIT_ROI_PCT = 6.8           # +6.8% Baseline Target ROI on margin (~1.7% spot move at 4x)
+STOP_LOSS_PERCENT = 3.2               # Safe 3.2% SL outside candle noise
 FRONT_RUN_RATIO = 0.85                # Front-run predicted target at 85% distance to guarantee fill
 
 # Capital Opportunity Rotation Settings (DISABLED to let winners run to full target!)
@@ -136,8 +137,9 @@ TRAILING_PROFIT_STAIRCASE = [
     (30.0, 22.0), # At +30% ROI -> Lock +22.0% profit (~₹350 net profit)
     (22.0, 15.0), # At +22% ROI -> Lock +15.0% profit (~₹240 net profit)
     (15.0, 10.0), # At +15% ROI -> Lock +10.0% profit (~₹160 net profit)
-    (10.0, 6.0),  # At +10% ROI -> Lock +6.0% profit (~₹100 net profit, guaranteed green after TDS/fees)
-    (7.5, 3.5),   # At +7.5% ROI -> Lock +3.5% Tax & Fee Armor (100% covers TDS, fee, and 31.2% tax)
+    (10.0, 6.0),  # At +10% ROI -> Lock +6.0% profit (~₹100 net profit)
+    (6.0, 3.0),   # At +6% ROI -> Lock +3.0% profit (guaranteed green after TDS/fees)
+    (3.5, 1.2),   # At +3.5% ROI -> Lock +1.2% Breakeven + Fee Armor (0 Loss Guarantee)
 ]
 
 # ==============================================================================

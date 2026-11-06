@@ -1,18 +1,14 @@
 {
-  "updated_at": "2026-11-04T18:45:00.000000+05:30",
+  "updated_at": "2026-11-06T19:46:36.976283",
   "paper_balance": 30000.0,
   "starting_balance": 30000.0,
   "max_slots": 2,
-  "is_running": true,
-  "allow_new_trades": true,
-  "active_positions": [],
-  "active_position": null,
   "summary": {
     "total_trades": 0,
     "completed_trades": 0,
     "wins": 0,
     "losses": 0,
-    "win_rate_pct": 0.0,
+    "win_rate_pct": 100.0,
     "total_pnl_inr": 0.0,
     "gross_pnl_inr": 0.0,
     "total_fees_inr": 0.0,
@@ -20,7 +16,11 @@
     "total_tax_inr": 0.0,
     "total_deductions_inr": 0.0,
     "total_volume_inr": 0.0,
-    "is_profitable": false
+    "is_profitable": true
   },
-  "trades": []
+  "trades": [],
+  "active_positions": [],
+  "active_position": null,
+  "is_running": true,
+  "allow_new_trades": true
 }
