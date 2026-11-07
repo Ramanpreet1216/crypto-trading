@@ -5,3 +5,5 @@ paper_trades.json
 *.key
 *.pem
 oracle_key.key
+*.backup
+push_to_github.bat

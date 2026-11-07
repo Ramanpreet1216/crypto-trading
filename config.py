@@ -57,23 +57,23 @@ STABLECOIN_PRICE_MAX = 1.04
 
 RISK_PROFILES = {
     "USER_MIRROR": {
-        "label": "User Mirror High-Win Scalper (+100% Win Edge)",
+        "label": "User Mirror Asymmetric 1:2 R:R (+100% Win Edge)",
         "leverage_btc": (8, 10),
         "leverage_eth": (8, 10),
         "leverage_alts": (3, 4),
         "investment_inr": 2500.0,
         "min_confidence": 86,          # Calibrated for 4 to 5 high-conviction trades per day
-        "stop_loss_pct": 3.20,         # Safe 3.2% spot SL (breathing room outside 15m noise)
-        "take_profit_pct": 6.50,       # 6.5% spot target (+26% ROI runner)
-        "target_profit_min_inr": 30.0,
-        "target_profit_max_inr": 150.0,
+        "stop_loss_pct": 2.50,         # Safe 2.5% spot SL (10% margin risk = ~₹250)
+        "take_profit_pct": 5.00,       # 5.0% spot target (+20% ROI target = +₹500 gross, 1:2 R:R)
+        "target_profit_min_inr": 150.0,
+        "target_profit_max_inr": 500.0,
         "front_run_ratio": 0.85,
         "margin_defense_drawdown_pct": -48.0,
         "margin_defense_topup_ratio": 0.50,
         "hard_stop_loss_margin_pct": -58.0,
         "post_loss_cooldown_seconds": 1800,  # 30-min cooldown after a stop-loss
         "timeframe": "15m",
-        "description": "High-Win Rate Scalper (Quick +2.5% Target Hit, 3.2% SL Breathing Room, Early Breakeven Armor, 2-Slot Cap)."
+        "description": "Asymmetric 1:2 R:R Architecture (2.5% SL, 5.0% TP, Breakeven Armor, 2-Slot Cap)."
     },
     "SAFE": {
         "label": "Safe Mode (25-35% Monthly)",
@@ -118,12 +118,13 @@ MARGIN_DEFENSE_DRAWDOWN_PCT = -48.0  # At -48% drawdown (~6.5% spot drop), check
 MARGIN_DEFENSE_TOPUP_RATIO = 0.50    # Top up 50% margin to de-leverage (e.g. 8x -> 5.3x) and absorb drawdown
 HARD_STOP_LOSS_MARGIN_PCT = -58.0    # Final hard stop barrier (~8% spot drop) to prevent deep losses
 
-# Target Profit Settings: Dynamic Quick Scalp +6.8% Take-Profit (₹30 - ₹80 Net In-Pocket)
-TARGET_PROFIT_MIN_INR = 30.0          # ₹30 minimum net profit per trade
-TARGET_PROFIT_MAX_INR = 150.0         # ₹150 maximum target profit for normal scalps
-TARGET_PROFIT_ROI_PCT = 6.8           # +6.8% Baseline Target ROI on margin (~1.7% spot move at 4x)
-STOP_LOSS_PERCENT = 3.2               # Safe 3.2% SL outside candle noise
+# Target Profit Settings: Asymmetric 1:2 R:R (₹150 - ₹500 Net In-Pocket per Trade)
+TARGET_PROFIT_MIN_INR = 150.0         # ₹150 minimum net profit per trade (covers fees & TDS with real gain)
+TARGET_PROFIT_MAX_INR = 500.0         # ₹500 maximum target profit for 1:2 R:R winners
+TARGET_PROFIT_ROI_PCT = 16.0          # +16.0% Baseline Target ROI on margin (~4.0% spot move at 4x)
+STOP_LOSS_PERCENT = 2.50              # Safe 2.50% SL (~10% margin risk on 4x leverage)
 FRONT_RUN_RATIO = 0.85                # Front-run predicted target at 85% distance to guarantee fill
+RISK_REWARD_RATIO = 2.0               # Strict 1:2 Asymmetric R:R
 
 # Capital Opportunity Rotation Settings (DISABLED to let winners run to full target!)
 CAPITAL_ROTATION_ENABLED = False
@@ -133,11 +134,11 @@ ROTATION_CANDIDATE_MIN_MTF = 4        # 4/5 or 5/5 MTF agreement
 
 # Unified Multi-Stage Trailing Profit Staircase (Guarantees net profit after Indian TDS & fees):
 TRAILING_PROFIT_STAIRCASE = [
-    (40.0, 30.0), # At +40% ROI -> Lock +30.0% profit (~₹500 net profit)
-    (30.0, 22.0), # At +30% ROI -> Lock +22.0% profit (~₹350 net profit)
-    (22.0, 15.0), # At +22% ROI -> Lock +15.0% profit (~₹240 net profit)
-    (15.0, 10.0), # At +15% ROI -> Lock +10.0% profit (~₹160 net profit)
-    (10.0, 6.0),  # At +10% ROI -> Lock +6.0% profit (~₹100 net profit)
+    (40.0, 30.0), # At +40% ROI -> Lock +30.0% profit (~₹750 net profit)
+    (30.0, 22.0), # At +30% ROI -> Lock +22.0% profit (~₹550 net profit)
+    (22.0, 16.0), # At +22% ROI -> Lock +16.0% profit (~₹400 net profit)
+    (15.0, 10.0), # At +15% ROI -> Lock +10.0% profit (~₹250 net profit)
+    (10.0, 6.0),  # At +10% ROI -> Lock +6.0% profit (~₹150 net profit)
     (6.0, 3.0),   # At +6% ROI -> Lock +3.0% profit (guaranteed green after TDS/fees)
     (3.5, 1.2),   # At +3.5% ROI -> Lock +1.2% Breakeven + Fee Armor (0 Loss Guarantee)
 ]

@@ -703,21 +703,19 @@ def bot_worker():
                     # Standard Risk Rules applied dynamically to all coins
 
                     # GUARANTEED NET-PROFIT EXIT RULES (Prevents selling for a loss after fees & TDS)
-                    # Note: On a ₹6,000 position, exchange fees (~₹42) + 1% TDS (~₹60) = ~₹102 total friction.
-                    # A trade must NEVER close on a 'Profit Target' unless net_pnl is strictly positive!
+                    # Note: On a ₹2,500 position at 4x leverage, exchange fees (~₹10) + 1% TDS (~₹25) = ~₹35 total friction.
+                    # A trade must NEVER close on a 'Profit Target' unless net_pnl is strictly positive and meaningful!
                     is_turtle = pos.get("strategy") == "TURTLE_SYSTEM_2" or getattr(config, "STRATEGY_MODE", "TURTLE") == "TURTLE"
 
-                    # 100% Win-Rate Quick Scalp Exit: Bank +30 to +80 INR on quick +0.6% spot continuation
-                    if not exit_trigger and not is_turtle:
-                        if net_pnl >= 30.0 and gross_pnl_pct >= 2.5:
-                            exit_trigger = f"Quick Target Hit (+{gross_pnl_pct:.1f}% ROI / Net INR {net_pnl:+.2f})!"
-
+                    # ASYMMETRIC 1:2 R:R TARGET EXIT LOGIC (Eliminated peanut +₹30 exits!)
+                    # Let trades run to real targets (₹150 to ₹500+ net).
+                    # Early pullbacks are protected by TRAILING_PROFIT_STAIRCASE (Breakeven Armor at +3.5% ROI).
                     if not exit_trigger:
-                        target_roi = float(getattr(config, "TARGET_PROFIT_ROI_PCT", 6.8))
-                        max_tp_inr = float(getattr(config, "TARGET_PROFIT_MAX_INR", 150.0))
+                        target_roi = float(getattr(config, "TARGET_PROFIT_ROI_PCT", 16.0))
+                        max_tp_inr = float(getattr(config, "TARGET_PROFIT_MAX_INR", 500.0))
 
                         # Only trigger standard take-profit if Net PnL is positive and meets minimum net profit goal (after all fees & TDS)
-                        min_net_goal = float(getattr(config, "TARGET_PROFIT_MIN_INR", 30.0))
+                        min_net_goal = float(getattr(config, "TARGET_PROFIT_MIN_INR", 150.0))
                         if pos_dir == "LONG":
                             if target_p and current_price >= target_p and net_pnl > 0:
                                 runner_note = f" [Runner Target +{pos.get('runner_target_pct', 35)}% Hit!]" if pos.get("is_runner") else ""
@@ -1057,21 +1055,19 @@ def bot_worker():
                                 prob = candidate.get("probability", 85)
                                 precision = 6 if live_p < 1.0 else (4 if live_p < 50.0 else 2)
 
-                                # Dynamic Confidence-Based Target Scaling (₹20 - ₹50 Net Profit):
-                                # - 84% - 87% Confidence: Quick Scalp +6.8% to +8.5% ROI (₹24 - ₹30 profit)
-                                # - 88% - 92%+ Confidence: High-Conviction Breakout +12.0% to +14.0% ROI (₹42 - ₹50 profit)
-                                front_run = getattr(config, "FRONT_RUN_RATIO", 0.75)
+                                # Dynamic Confidence-Based Target Scaling for 1:2 R:R (₹150 - ₹500 Net Profit):
+                                front_run = getattr(config, "FRONT_RUN_RATIO", 0.85)
                                 c_prob = float(candidate.get("probability", 85) or 85)
                                 if c_prob >= 90.0:
-                                    target_roi_pct = 12.0  # Scalp profit on 2500 margin (~3.0% spot move on 4x)
+                                    target_roi_pct = 22.0  # +22% ROI on 2500 margin (~5.5% spot on 4x, ~₹500 net profit)
                                 elif c_prob >= 88.0:
-                                    target_roi_pct = 9.5   # Scalp profit on 2500 margin (~2.4% spot move on 4x)
+                                    target_roi_pct = 18.0  # +18% ROI on 2500 margin (~4.5% spot on 4x, ~₹400 net profit)
                                 elif c_prob >= 86.0:
-                                    target_roi_pct = 7.5   # Scalp profit on 2500 margin (~1.8% spot move on 4x)
+                                    target_roi_pct = 15.0  # +15% ROI on 2500 margin (~3.75% spot on 4x, ~₹320 net profit)
                                 else:
-                                    target_roi_pct = float(getattr(config, "TARGET_PROFIT_ROI_PCT", 6.8))
+                                    target_roi_pct = float(getattr(config, "TARGET_PROFIT_ROI_PCT", 16.0))
 
-                                min_sl_pct = float(getattr(config, "STOP_LOSS_PERCENT", 3.2)) / 100.0
+                                min_sl_pct = float(getattr(config, "STOP_LOSS_PERCENT", 2.5)) / 100.0
                                 min_sl_dist = live_p * min_sl_pct
                                 rrr = float(getattr(config, "RISK_REWARD_RATIO", 2.0))
 
