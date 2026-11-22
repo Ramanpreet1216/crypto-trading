@@ -2470,6 +2470,13 @@ def start_server():
             # Initialize & launch Bot 4 autonomous engine
             from bot4_engine import bot4
             bot4.start_background_loop()
+
+            # Auto-populate top strategies if database is fresh
+            from database import master_db
+            from bot4_strategy_optimizer import generate_and_evaluate_strategies
+            if not master_db.get_top_strategies(limit=1):
+                print("[🤖 BOT 4] Auto-generating top empirical strategies into master database...")
+                generate_and_evaluate_strategies({}, num_strategies=30)
         except Exception as b4_err:
             print(f"[Bot 4 Init Warning]: {b4_err}")
 
