@@ -2054,6 +2054,30 @@ class TradingApiHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(supervisor.get_status_dict()).encode("utf-8"))
             return
 
+        # API: Bot 4 Autonomous Anti-Wick & Strategy Generator Status
+        elif path == "/api/bot4/status":
+            try:
+                from database import master_db
+                from bot4_engine import bot4
+                wallet = master_db.get_bot_wallet("bot4")
+                trades = master_db.get_recent_trades(bot_id="bot4", limit=15)
+                top_strats = master_db.get_top_strategies(limit=10)
+                payload = {
+                    "wallet": wallet,
+                    "positions": bot4.positions,
+                    "recent_trades": trades,
+                    "top_strategies": top_strats
+                }
+            except Exception as e:
+                payload = {"error": str(e)}
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload, default=str).encode("utf-8"))
+            return
+
         # Fallback to serving web directory files (HTML, CSS, JS)
         return super().do_GET()
 
@@ -2440,7 +2464,15 @@ def start_server():
         print(f"\n=======================================================")
         print(f"  COINDCX VISUAL TRADING DASHBOARD RUNNING")
         print(f"  Access UI at: http://localhost:{PORT}")
+        print(f"  Unified 4-Bot Suite: Bot 1, Bot 2, Bot 3 + Bot 4 Active")
         print(f"=======================================================\n")
+        try:
+            # Initialize & launch Bot 4 autonomous engine
+            from bot4_engine import bot4
+            bot4.start_background_loop()
+        except Exception as b4_err:
+            print(f"[Bot 4 Init Warning]: {b4_err}")
+
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
